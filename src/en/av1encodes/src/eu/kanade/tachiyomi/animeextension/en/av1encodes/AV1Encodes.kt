@@ -89,11 +89,9 @@ class Av1Encodes :
     // POPULAR
     // ══════════════════════════════════════════════════════════════════════════
 
-    override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/stats#top-downloads", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/stats#top-downloads", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage =
-        AnimesPage(parseStatsPage(response.asJsoup()), false)
+    override fun popularAnimeParse(response: Response): AnimesPage = AnimesPage(parseStatsPage(response.asJsoup()), false)
 
     private fun parseStatsPage(doc: Document): List<SAnime> {
         val seen = mutableSetOf<String>()
@@ -180,11 +178,9 @@ class Av1Encodes :
     // LATEST
     // ══════════════════════════════════════════════════════════════════════════
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/airing/sub?page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/airing/sub?page=$page", headers)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        parseUniversalList(response.asJsoup())
+    override fun latestUpdatesParse(response: Response): AnimesPage = parseUniversalList(response.asJsoup())
 
     // ══════════════════════════════════════════════════════════════════════════
     // SEARCH
@@ -221,8 +217,7 @@ class Av1Encodes :
         }
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage =
-        parseUniversalList(response.asJsoup())
+    override fun searchAnimeParse(response: Response): AnimesPage = parseUniversalList(response.asJsoup())
 
     // ══════════════════════════════════════════════════════════════════════════
     // UNIFIED LIST PARSER
@@ -398,7 +393,10 @@ class Av1Encodes :
                             .build(),
                     ),
                 ).execute()
-                if (!resp.isSuccessful) { resp.close(); continue }
+                if (!resp.isSuccessful) {
+                    resp.close()
+                    continue
+                }
                 resp.body.string()
             } catch (_: Exception) {
                 continue
@@ -462,7 +460,9 @@ class Av1Encodes :
                             .build(),
                     ),
                 ).execute().body.string()
-            } catch (_: Exception) { return emptyList() }
+            } catch (_: Exception) {
+                return emptyList()
+            }
 
             val ddlToken = extractDdlToken(downloadPageHtml) ?: return emptyList()
 
@@ -487,7 +487,9 @@ class Av1Encodes :
                         .build(),
                 ),
             ).execute().body.string()
-        } catch (_: Exception) { return emptyList() }
+        } catch (_: Exception) {
+            return emptyList()
+        }
 
         // Step 2: Extract token from inline JS
         val token = extractDdlToken(pageHtml) ?: return emptyList()
@@ -518,11 +520,15 @@ class Av1Encodes :
 
         val raw = try {
             client.newCall(GET(ddlUrl, ddlHeaders)).execute().body.string()
-        } catch (_: Exception) { return emptyList() }
+        } catch (_: Exception) {
+            return emptyList()
+        }
 
         val ddl = try {
             json.decodeFromString<DdlResponse>(raw)
-        } catch (_: Exception) { return emptyList() }
+        } catch (_: Exception) {
+            return emptyList()
+        }
 
         if (!ddl.success) return emptyList()
 
@@ -589,8 +595,7 @@ class Av1Encodes :
         buildPreferenceScreen(screen, preferences)
     }
 
-    override fun List<Video>.sort(): List<Video> =
-        sortByPreferredQuality(preferences)
+    override fun List<Video>.sort(): List<Video> = sortByPreferredQuality(preferences)
 
     // ══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
