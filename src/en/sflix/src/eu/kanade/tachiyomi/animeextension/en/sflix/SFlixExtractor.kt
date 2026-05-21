@@ -5,6 +5,8 @@ import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.vidsrcextractor.VidsrcExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -25,31 +27,22 @@ class SFlixExtractor(
 
     // ── Chain A: VidSrc ──────────────────────────────────────────────────────
 
-    fun fromVidSrc(embedUrl: String, serverName: String): List<Video> = runCatching {
-        VidsrcExtractor(client, headers).videosFromUrl(
-            embedLink = embedUrl,
-            hosterName = serverName,
-        )
-    }.getOrElse {
-        Log.e(tag, "VidSrc failed for $embedUrl: ${it.message}")
-        emptyList()
-    }
+    suspend fun fromVidSrc(embedUrl: String, serverName: String): List<Video> = VidsrcExtractor(client, headers).videosFromUrl(embedLink = embedUrl, hosterName = serverName)
 
     // ── Chain B: MoviesAPI ───────────────────────────────────────────────────
 
-    fun fromMoviesApi(
+    suspend fun fromMoviesApi(
         clubUrl: String,
         serverName: String,
         season: String? = null,
         episode: String? = null,
-    ): List<Video> = runCatching {
+    ): List<Video> {
         // ── Step 1: Get the IMDB content ID ──────────────────────────────────
         // Follow the HTTP 301 from moviesapi.club to moviesapi.to.
         // We only need the content ID (imdb) from the final URL.
         val step1Resp = client.newCall(
             GET(clubUrl, headers.newBuilder().set("Referer", "$siteUrl/").build()),
-        ).execute()
-        step1Resp.body.close()
+        ).awaitSuccess().also { it.close() }
 
         // Extract the raw path segment (e.g. "tt1234567" for movies,
         // "tt1234567-1-2" for TV URLs like moviesapi.club/tv/<imdb>-<s>-<e>).
@@ -87,13 +80,13 @@ class SFlixExtractor(
 
         // ── Step 3: Call the API and extract stream URLs ──────────────────────
         // Use .use {} so the response body is always closed, including the error path.
-        val streamUrls = client.newCall(GET(apiUrl, apiHeaders)).execute().use { apiResp ->
+        val streamUrls = client.newCall(GET(apiUrl, apiHeaders)).awaitSuccess().use { apiResp ->
             if (!apiResp.isSuccessful) {
                 Log.e(tag, "streamdata API returned ${apiResp.code} for $apiUrl")
                 return emptyList()
             }
             val apiBody = apiResp.body.string()
-            val apiData = json.decodeFromString<StreamDataResponse>(apiBody)
+            val apiData = apiBody.parseAs<StreamDataResponse>(json)
 
             // Confirmed: data.stream_urls is a list of master.m3u8 URLs (multiple CDN mirrors).
             apiData.data?.streamUrls
@@ -110,7 +103,7 @@ class SFlixExtractor(
             .set("Origin", BRIGHTPATH_ORIGIN)
             .build()
 
-        streamUrls.flatMap { masterUrl ->
+        return streamUrls.flatMap { masterUrl ->
             playlistUtils.extractFromHls(
                 playlistUrl = masterUrl,
                 masterHeaders = hlsHeaders,
@@ -120,9 +113,6 @@ class SFlixExtractor(
                 listOf(Video(masterUrl, "$serverName - Unknown", masterUrl, hlsHeaders))
             }
         }
-    }.getOrElse {
-        Log.e(tag, "MoviesAPI failed for $clubUrl: ${it.message}", it)
-        emptyList()
     }
 
     // ── Response models ──────────────────────────────────────────────────────

@@ -11,9 +11,9 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -27,7 +27,7 @@ class SFlix :
     override val name = "SFlix"
     override val baseUrl = "https://sflix.ch"
     override val lang = "en"
-    override val supportsLatest = true
+    override val supportsLatest = false
 
     // Keeps the same stable ID as the previous DopeFlix-based implementation
     // so existing users do not lose their library entries on update.
@@ -52,12 +52,10 @@ class SFlix :
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         // The detail-page link is in div.poster > a; fall back to div.meta > a.
         val href = element.selectFirst("div.poster > a")?.attr("href")
-            ?: element.selectFirst("div.meta > a")?.attr("href")
-            ?: ""
+            ?: element.selectFirst("div.meta > a")?.attr("href")!!
         setUrlWithoutDomain(href)
         title = element.selectFirst("div.meta > a")?.text()
-            ?: element.selectFirst("img")?.attr("alt")
-            ?: ""
+            ?: element.selectFirst("img")?.attr("alt")!!
         // Lazy-loaded poster: src is a base64 placeholder, real URL is in data-src
         thumbnail_url = element.selectFirst("img[data-src]")?.attr("data-src")
             ?: element.selectFirst("img")?.attr("src")
@@ -68,11 +66,10 @@ class SFlix :
     // ============================== Latest ==============================
 
     // Latest IS the default — same URL as popular.
-    override fun latestUpdatesRequest(page: Int): Request = GET(pagedUrl("quality/hd", page, "Latest"), headers)
-
-    override fun latestUpdatesSelector() = popularAnimeSelector()
-    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
-    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
+    override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
+    override fun latestUpdatesSelector() = throw UnsupportedOperationException()
+    override fun latestUpdatesFromElement(element: Element) = throw UnsupportedOperationException()
+    override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException()
 
     // ============================== Search ==============================
 
@@ -103,7 +100,7 @@ class SFlix :
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         return AnimesPage(
             doc.select(popularAnimeSelector()).map { popularAnimeFromElement(it) },
             doc.selectFirst(popularAnimeNextPageSelector()) != null,
@@ -118,7 +115,7 @@ class SFlix :
     // ============================== Details ==============================
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1[itemprop=name]")?.text() ?: ""
+        document.selectFirst("h1[itemprop=name]")?.text()?.let { title = it }
         thumbnail_url = document.selectFirst("div.poster img[data-src]")?.attr("data-src")
             ?: document.selectFirst("div.poster img")?.attr("src")
         description = document.selectFirst("div.description p")?.text()
@@ -140,7 +137,7 @@ class SFlix :
     // ============================== Episodes ==============================
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val pageUrl = response.request.url.toString()
 
         val serversRaw = doc.selectFirst("script:containsData(var Servers)")?.data() ?: ""
@@ -217,7 +214,7 @@ class SFlix :
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val episodeUrl = response.request.header(EPISODE_HEADER)
             ?: response.request.url.toString()
 
