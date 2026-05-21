@@ -30,10 +30,6 @@ class SFlixFmovie :
     override val lang = "en"
     override val supportsLatest = false
 
-    // Keeps the same stable ID as the previous DopeFlix-based implementation
-    // so existing users do not lose their library entries on update.
-    override val id: Long = 8615824918772726940
-
     private val preferences by getPreferencesLazy()
 
     // ============================== Helpers ==============================
