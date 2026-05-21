@@ -228,6 +228,50 @@ class SFlixFmovie :
         val isTvType = "__type=tv" in episodeUrl
         val isTv = season != null && ep != null
 
+
+        /*
+        For Movies:
+        Look for this:
+        var Servers = {
+      "post_id": "12386",
+      "id": "687163",
+      "imdb_id": "tt12042730",
+      "image": "//image.tmdb.org/t/p/original/8Tfys3mDZVp4tNoH2ktm06a0Tau.jpg",
+      "vote_average": "8.1",
+      "site": "https://sflix.ch/wp-content/themes/fmovie",
+      "domain": "https://sflix.ch/",
+      "youtube_id": "aZZWlOHkzzg",
+      "premium": "https://sflix.ch/api/movie.php?tmdb=687163",
+      "embedru": "https://vidsrc-embed.ru/embed/movie/tt12042730",
+      "superembed": "https://sflix.ch/wp-content/plugins/fmovie-core/player/player.php?video_id=tt12042730",
+      "vidsrc": "https://moviesapi.to/movie/tt12042730",
+      "autoembed": "enable"
+    };
+
+    the moviesapi currently works with this extension
+         */
+
+        /*
+        For TV:
+        - If the movie url is: https://sflix.ch/paranormal-caught-on-camera/
+        - Then parsing its response
+        <section id="servers">
+            <p class="sv-desc">
+              If current server doesn't work please try other servers below. </p>
+            <ul class="servers">
+              <li class="server active" data-load-embed="86845" data-load-embed-host="embedru" data-load-season="1" data-load-episode="1">
+                <span>Server 1</span> <i class="bi bi-hdd-stack"></i>
+              </li>
+              <li class="server" data-load-embed="86845" data-load-embed-host="vidsrc" data-load-season="1" data-load-episode="1">
+                <span>Server 2</span> <i class="bi bi-hdd-stack"></i>
+              </li>
+            </ul>
+          </section>
+
+        - https://sflix.ch/getPlayTV.php?id=86845&s=1&e=1&sv=embedru&playtv=true
+        - https://vidsrc-embed.ru/embed/tv/86845/1-1 (301)
+        - https://vsembed.ru/embed/tv/86845/1-1
+         */
         val vidsrcUrl: String? = when {
             isTv && imdbId != null -> "https://vidsrc.xyz/embed/tv/$imdbId/$season-$ep"
             isTvType && imdbId != null -> "https://vidsrc.xyz/embed/tv/$imdbId/1-1"
