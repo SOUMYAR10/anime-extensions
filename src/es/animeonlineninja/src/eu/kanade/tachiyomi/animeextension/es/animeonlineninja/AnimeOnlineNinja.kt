@@ -299,6 +299,8 @@ class AnimeOnlineNinja :
     }
 
     // ============================= Utilities ==============================
+    override fun String.toDate() = 0L
+
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(prefQualityKey, prefQualityDefault)!!
         val lang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!

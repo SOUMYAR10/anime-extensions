@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.cryptoaes.CryptoAES
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.tryParse
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -76,7 +77,7 @@ class SoloLatino :
                 setUrlWithoutDomain(doc.location())
                 episode_number = 1F
                 name = episodeMovieText
-                date_upload = doc.selectFirst("span.date")?.text()?.toDate() ?: 0L
+                date_upload = doc.selectFirst("span.date")?.text().let(dateFormat::tryParse)
             }.let(::listOf)
         } else {
             seasonList.flatMap(::getSeasonEpisodes).reversed()
@@ -103,7 +104,7 @@ class SoloLatino :
         val episodeName = element.selectFirst("div.epst")?.text() ?: "Sin título"
 
         episode_number = epNum.toFloatOrNull() ?: 0F
-        date_upload = element.selectFirst("span.date")?.text()?.toDate() ?: 0L
+        date_upload = element.selectFirst("span.date")?.text().let(dateFormat::tryParse)
 
         name = "T$seasonName - Episodio $epNum: $episodeName"
         setUrlWithoutDomain(href)
@@ -572,13 +573,7 @@ class SoloLatino :
 
     // ============================= Utilities ==============================
 
-    override fun String.toDate(): Long = try {
-        val dateFormat = SimpleDateFormat("MMM. dd, yyyy", Locale.ENGLISH)
-        val date = dateFormat.parse(this)
-        date?.time ?: 0L
-    } catch (_: Exception) {
-        0L
-    }
+    private val dateFormat = SimpleDateFormat("MMM. dd, yyyy", Locale.ENGLISH)
 
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(prefQualityKey, prefQualityDefault)!!

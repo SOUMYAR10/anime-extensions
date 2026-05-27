@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dopeflix.DopeFlix
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.utils.tryParse
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -498,7 +499,7 @@ class LaMovie :
     private fun parseDate(value: String?): Long {
         if (value.isNullOrBlank()) return 0L
         return DATE_FORMATS.firstNotNullOfOrNull { format ->
-            runCatching { format.parse(value)?.time }.getOrNull()
+            format.tryParse(value)
         } ?: 0L
     }
 

@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.tryParse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -199,7 +200,7 @@ class Anitube :
         name = element.selectFirst("div.animepag_episodios_item_views")!!.text()
         date_upload = element.selectFirst("div.animepag_episodios_item_date")!!
             .text()
-            .toDate()
+            .let(DATE_FORMATTER::tryParse)
     }
 
     // ============================ Video Links =============================
@@ -304,16 +305,11 @@ class Anitube :
         ).reversed()
     }
 
-    private fun String.toDate(): Long = runCatching {
-        DATE_FORMATTER.parse(this)?.time
-    }.getOrNull() ?: 0L
-
-    private fun getDomainPrefSummary(): String =
-        preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!!.let {
-            """$it
+    private fun getDomainPrefSummary(): String = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!!.let {
+        """$it
                 | Para qualquer alteração ser aplicada, o reinício da app é necessário.
-            """.trimMargin()
-        }
+        """.trimMargin()
+    }
 
     companion object {
         const val PREFIX_SEARCH = "id:"

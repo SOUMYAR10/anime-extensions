@@ -222,6 +222,8 @@ class VerPelisTop :
         replace(it, redirectingDomain)
     } ?: this
 
+    override fun String.toDate() = 0L
+
     private fun String.normalize(): String {
         val normalized = Normalizer.normalize(this, Normalizer.Form.NFD)
         return normalized.replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")

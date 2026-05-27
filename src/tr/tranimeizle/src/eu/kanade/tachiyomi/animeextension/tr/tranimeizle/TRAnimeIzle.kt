@@ -30,6 +30,7 @@ import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.tryParse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -181,7 +182,7 @@ class TRAnimeIzle :
         name = "Bölüm $epNum"
         episode_number = epNum.toFloat()
 
-        date_upload = element.selectFirst(".etitle > small.author")?.text()?.toDate() ?: 0L
+        date_upload = element.selectFirst(".etitle > small.author")?.text().let(DATE_FORMATTER::tryParse)
     }
 
     // ============================ Video Links =============================
@@ -355,9 +356,6 @@ class TRAnimeIzle :
 
     // ============================= Utilities ==============================
     private fun String.clearName() = removeSuffix(" İzle").removeSuffix(" Bölüm")
-
-    private fun String.toDate(): Long = runCatching { DATE_FORMATTER.parse(trim())?.time }
-        .getOrNull() ?: 0L
 
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!

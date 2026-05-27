@@ -131,6 +131,8 @@ class PinoyMoviePedia :
     }
 
     // ============================= Utilities ==============================
+    override fun String.toDate() = 0L
+
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(prefQualityKey, prefQualityDefault)!!
         val server = preferences.getString(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)!!

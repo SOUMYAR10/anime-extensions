@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.tryParse
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Request
@@ -101,7 +102,7 @@ class Docchi :
                 name = "${episode.anime_episode_number.toInt()} Odcinek"
                 url = "$baseUrl/production/as/${episode.anime_id}/${episode.anime_episode_number}"
                 episode_number = episode.anime_episode_number
-                date_upload = parseDate(episode.created_at)
+                date_upload = dateFormat.tryParse(episode.created_at)
             }
         }.reversed()
     }
@@ -247,18 +248,16 @@ class Docchi :
                 .thenByDescending { it.quality.contains(server, true) },
         )
     }
+
     private fun myanimelistApi(id: Int): MyAnimeListResponse {
         val document = client.newCall(
             GET("https://api.jikan.moe/v4/anime/$id"),
         ).execute()
         return document.body.string().parseAs<MyAnimeListResponse>()
     }
-    private fun parseDate(date: String): Long = try {
-        val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-        formatter.parse(date)?.time ?: 0L
-    } catch (e: Exception) {
-        0L
-    }
+
+    private val dateFormat by lazy { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault()) }
+
     private fun parseStatus(statusString: String): Int = when {
         statusString.lowercase().contains("currently airing") -> SAnime.ONGOING
         statusString.lowercase().contains("finished airing") -> SAnime.COMPLETED

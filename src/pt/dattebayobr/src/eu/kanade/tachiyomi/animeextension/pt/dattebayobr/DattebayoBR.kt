@@ -8,10 +8,13 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.tryParse
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
 import org.jsoup.nodes.Element
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 class DattebayoBR : AnimeHttpSource() {
     override val name = "Dattebayo BR"
@@ -154,7 +157,7 @@ class DattebayoBR : AnimeHttpSource() {
                 setUrlWithoutDomain(anchor.attr("href"))
                 name = episodeName
                 episode_number = episodeNumber ?: 0f
-                date_upload = parseDate(element.selectFirst(".lancaster_episodio_info_data")?.text())
+                date_upload = element.selectFirst(".lancaster_episodio_info_data")?.text().let(dateFormatter::tryParse)
             }
         } catch (e: Exception) {
             return null
@@ -215,17 +218,7 @@ class DattebayoBR : AnimeHttpSource() {
             }
     }
 
-    private fun parseDate(dateText: String?): Long {
-        if (dateText.isNullOrBlank()) return 0L
-
-        return try {
-            val pattern = "dd/MM/yyyy 'às' HH:mm"
-            val formatter = java.text.SimpleDateFormat(pattern, java.util.Locale("pt", "BR"))
-            formatter.parse(dateText)?.time ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
-    }
+    private val dateFormatter by lazy { SimpleDateFormat("dd/MM/yyyy 'às' HH:mm", Locale("pt", "BR")) }
 
     // Videos
     override fun videoListParse(response: Response): List<Video> {

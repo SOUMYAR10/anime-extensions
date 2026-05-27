@@ -382,7 +382,7 @@ class Jkanime :
         val htmlLinks = document.select("div.bg-servers a").map {
             val serverId = it.attr("data-id")
             val lang = it.attr("class").substringAfter("lg_").substringBefore(" ").toIntOrNull()?.getLang() ?: ""
-            val name = it.text().ifBlank { "" }
+            val name = it.text().ifBlank { "" } ?: ""
             val url = scriptServers
                 .substringAfter("video[$serverId] = '<iframe class=\"player_conte\" src=\"")
                 .substringBefore("\"")

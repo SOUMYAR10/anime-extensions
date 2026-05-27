@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.tryParse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -33,12 +34,9 @@ private val DATE_FORMATTER by lazy {
     SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.ENGLISH)
 }
 
-private fun String.toDate(): Long {
-    return runCatching { DATE_FORMATTER.parse(trim())?.time }
-        .getOrNull() ?: 0L
-}
-
-class Goyabu : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
+class Goyabu :
+    ParsedAnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Goyabu"
 
@@ -272,7 +270,7 @@ class Goyabu : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
             url = link
             name = "Episódio $episodio" + if (episodeName.isNotEmpty()) " - $episodeName" else ""
             episode_number = episodio.toFloatOrNull() ?: 1F
-            date_upload = update.toDate()
+            date_upload = DATE_FORMATTER.tryParse(update.trim())
             scanlator = "Áudio: $audio"
         }
     }

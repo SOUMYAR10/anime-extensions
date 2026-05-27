@@ -311,7 +311,7 @@ class AnimesDigital :
             val normalized = date.lowercase(Locale.ROOT).trim()
 
             // Espera formatos como "2 semanas atrás", "1 dia atrás", etc.
-            val match = Regex("""(\d+)\s+([^\s]+)""").find(normalized) ?: return 0L
+            val match = Regex("""(\d+)\s+(\S+)""").find(normalized) ?: return 0L
 
             val amount = match.groupValues[1].toLongOrNull() ?: return 0L
             val unit = match.groupValues[2]
