@@ -50,8 +50,6 @@ class AV1Encodes :
         Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
     }
 
-    // Must be get() — preferences are not yet loaded when the source object is constructed,
-    // so a val initialised at construction time always captures the default domain.
     override val baseUrl: String
         get() = preferences.getString(PREF_DOMAIN_KEY, PREF_DOMAIN_DEFAULT)!!
 
@@ -74,9 +72,7 @@ class AV1Encodes :
         .add("Sec-Fetch-Site", "none")
 
     // ══════════════════════════════════════════════════════════════════════════
-    // POPULAR  —  /stats page, "Top Downloads" section.
-    // This page is a text-only leaderboard so thumbnail_url will be null;
-    // covers load from animeDetailsParse when the user opens an entry.
+    // POPULAR
     // ══════════════════════════════════════════════════════════════════════════
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/stats#top-downloads", headers)
@@ -159,7 +155,7 @@ class AV1Encodes :
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // LATEST  —  home page, article.anime-card layout
+    // LATEST
     // ══════════════════════════════════════════════════════════════════════════
 
     override fun latestUpdatesRequest(page: Int): Request = GET(baseUrl, headers)
@@ -186,7 +182,7 @@ class AV1Encodes :
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // SEARCH  —  /search?q= and filter routes
+    // SEARCH
     // ══════════════════════════════════════════════════════════════════════════
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -200,81 +196,106 @@ class AV1Encodes :
 
         var sortValue = ""
         var typeValue = ""
+        var genreValue = ""
         filters.forEach { filter ->
             when (filter) {
                 is SortFilter -> sortValue = SORT_VALUES.getOrElse(filter.state) { "" }
                 is TypeFilter -> typeValue = TYPE_VALUES.getOrElse(filter.state) { "" }
+                is GenreFilter -> genreValue = GENRE_VALUES.getOrElse(filter.state) { "" }
                 else -> {}
             }
         }
 
-        return when (typeValue) {
-            "sub" -> GET("$baseUrl/airing/sub?page=$page", headers)
-            "dual" -> GET("$baseUrl/airing/dual?page=$page", headers)
-            else -> {
-                val url = "$baseUrl/anime".toHttpUrl().newBuilder()
-                    .addQueryParameter("page", page.toString())
-                if (sortValue.isNotBlank()) url.addQueryParameter("sort", sortValue)
-                GET(url.build().toString(), headers)
-            }
+        Log.d(TAG, "searchAnimeRequest: sort=$sortValue type=$typeValue genre=$genreValue")
+
+        // Genre takes priority — uses path-based route
+        // With this:
+        val url = "$baseUrl/anime".toHttpUrl().newBuilder()
+            .addQueryParameter("page", page.toString())
+        if (genreValue.isNotBlank()) {
+            Log.d(TAG, "searchAnimeRequest: routing to /anime?genres=$genreValue&page=$page")
+            url.addQueryParameter("genres", genreValue)
         }
+        if (sortValue.isNotBlank()) url.addQueryParameter("sort", sortValue)
+        if (typeValue.isNotBlank()) url.addQueryParameter("type", typeValue)
+        return GET(url.build().toString(), headers)
     }
 
-    // Routes to the correct parser based on the URL path:
-    //   /search          → h3-layout  (same structure as /airing/*)
-    //   /airing/sub|dual → h3-layout
-    //   /anime           → plain li > a list, no images
     override fun searchAnimeParse(response: Response): AnimesPage {
         val doc = response.asJsoup()
-        val path = response.request.url.encodedPath
-        Log.d(TAG, "searchAnimeParse: path=$path")
+        val url = response.request.url
+        val path = url.encodedPath
+        val hasQueryParams = url.querySize > 0
+        Log.d(TAG, "searchAnimeParse: path=$path fullUrl=$url hasQueryParams=$hasQueryParams")
         return when {
-            path.startsWith("/anime") && !path.startsWith("/anime/") -> parseAnimeListPage(doc)
+            // Search page uses card layout
+            path == "/search" -> parseCardList(doc)
+
+            // Airing pages use card layout
+            path.startsWith("/airing") -> parseCardList(doc)
+
+            // Anime browse + sort + genres all use the SAME plain list layout
+            path == "/anime" -> parseAnimeListPage(doc)
+
             else -> parseCardList(doc)
         }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // CARD LIST PARSER  —  /airing/*, /search
-    // Layout: img above h3 title, a[href*='/anime/'] inside same block
+    // CARD LIST PARSER  —  /airing/*, /search, /genre/*
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun parseCardList(doc: Document): AnimesPage {
-        // Scope to the main content area so nav/header h3 elements are excluded.
-        // Fall back to the full document only if no content wrapper is found.
-        val contentRoot = doc.selectFirst(
-            "main, #main, #content, .content, [class*='anime-list'], [class*='anime-grid'], " +
-                "[class*='result'], [class*='listing'], [class*='airing'], section.animes",
-        ) ?: doc
+        // Try article cards first (same structure as latestUpdatesParse)
+        var animes = doc.select("article.anime-card, article[class*='card'], article[class*='anime']")
+            .mapNotNull { card ->
+                val a = card.selectFirst("h3 > a, h4 > a, .card-body a, a[href*='/anime/']")
+                    ?: return@mapNotNull null
+                val href = a.attr("href").let {
+                    if (it.startsWith("http")) it.removePrefix(baseUrl) else it
+                }
+                if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
+                val img = card.selectFirst("div.poster-wrap > img, img")
+                SAnime.create().apply {
+                    url = href
+                    title = (card.selectFirst("h3, h4")?.text() ?: a.text()).trim()
+                    thumbnail_url = img?.let {
+                        it.attr("abs:data-src").ifBlank { null }
+                            ?: it.attr("abs:data-lazy-src").ifBlank { null }
+                            ?: it.attr("abs:src").ifBlank { null }
+                    }
+                }
+            }.distinctBy { it.url }
 
-        val animes = contentRoot.select("h3").mapNotNull { h3 ->
-            val block = h3.parent() ?: return@mapNotNull null
-            val a = block.selectFirst("a[href*='/anime/']")
-                ?: block.parent()?.selectFirst("a[href*='/anime/']")
-                ?: return@mapNotNull null
+        // Fallback: h3-based selector (original logic)
+        if (animes.isEmpty()) {
+            val contentRoot = doc.selectFirst(
+                "main, #main, #content, .content, [class*='anime-list'], [class*='anime-grid'], " +
+                    "[class*='result'], [class*='listing'], [class*='airing'], section.animes",
+            ) ?: doc
+            animes = contentRoot.select("h3").mapNotNull { h3 ->
+                val block = h3.parent() ?: return@mapNotNull null
+                val a = block.selectFirst("a[href*='/anime/']")
+                    ?: block.parent()?.selectFirst("a[href*='/anime/']")
+                    ?: return@mapNotNull null
+                val href = a.attr("href").let {
+                    if (it.startsWith("http")) it.removePrefix(baseUrl) else it
+                }
+                if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
+                val img = block.parent()?.selectFirst("img") ?: block.selectFirst("img")
+                SAnime.create().apply {
+                    url = href
+                    title = h3.text().trim()
+                    thumbnail_url = img?.let {
+                        it.attr("abs:data-src").ifBlank { null }
+                            ?: it.attr("abs:data-lazy-src").ifBlank { null }
+                            ?: it.attr("abs:src").ifBlank { null }
+                    }
+                }
+            }.distinctBy { it.url }
+        }
 
-            val href = a.attr("href").let {
-                if (it.startsWith("http")) it.removePrefix(baseUrl) else it
-            }
-            if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
-
-            // Try all common lazy-load attributes before falling back to plain src.
-            val img = block.parent()?.selectFirst("img") ?: block.selectFirst("img")
-            val thumbUrl = img?.let {
-                it.attr("abs:data-src").ifBlank { null }
-                    ?: it.attr("abs:data-lazy-src").ifBlank { null }
-                    ?: it.attr("abs:src").ifBlank { null }
-            }
-
-            SAnime.create().apply {
-                url = href
-                title = h3.text().trim()
-                thumbnail_url = thumbUrl
-            }
-        }.distinctBy { it.url }
-
-        // Only treat a link as "next page" when it sits inside a recognised
-        // pagination element — avoids false positives from nav "Next episode" links.
+        Log.d(TAG, "parseCardList: found ${animes.size} animes")
         val hasNextPage = doc.selectFirst(
             ".pagination a[rel=next], .pagination .next:not(.disabled), " +
                 "nav.pagination a:contains(Next), [aria-label=Next page]",
@@ -284,7 +305,6 @@ class AV1Encodes :
 
     // ══════════════════════════════════════════════════════════════════════════
     // PLAIN LIST PARSER  —  /anime (A-Z browse)
-    // Layout: li > a[href*='/anime/'] with title as link text, no images
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun parseAnimeListPage(doc: Document): AnimesPage {
@@ -308,9 +328,7 @@ class AV1Encodes :
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // N+1 COVER FETCHER  —  parallel fetch of missing thumbnails
-    // Only used for pages that have no images (stats page, /anime list page).
-    // Each fetch hits the anime detail page and reads the og:image or poster img.
+    // N+1 COVER FETCHER
     // ══════════════════════════════════════════════════════════════════════════
 
     private fun fetchMissingCovers(animes: List<SAnime>) {
@@ -416,14 +434,11 @@ class AV1Encodes :
                 continue
             }
 
-            // Parse direct download links from the episode listing page.
-            // Each link: /download/slug/season/res/filename.mkv?token=xxx
             val epDoc = Jsoup.parse(epHtml)
             val downloadLinks = epDoc.select("a[href*='/download/']")
             Log.d(TAG, "episodeListParse: found ${downloadLinks.size} download links for season $season")
 
             if (downloadLinks.isEmpty()) {
-                // Fallback: try regex on raw HTML for filenames
                 Log.w(TAG, "episodeListParse: no <a> links found, falling back to regex on raw HTML")
                 val filenames = extractFilenames(epHtml)
                 Log.d(TAG, "episodeListParse: regex found ${filenames.size} filenames")
@@ -444,11 +459,9 @@ class AV1Encodes :
                 Regex("""E(\d+)""", RegexOption.IGNORE_CASE)
                     .find(link.attr("href"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
             }.forEach { link ->
-                val fullHref = link.attr("href") // e.g. /download/slug/1/1920 x 1080/[S01-E01]...mkv?token=xxx
+                val fullHref = link.attr("href")
                 Log.d(TAG, "episodeListParse: episode link → $fullHref")
 
-                // Store the full path including token as the episode URL.
-                // getVideoList will use this to hit the download page and also try get_ddl.
                 val epUrl = if (fullHref.startsWith("http")) {
                     fullHref.removePrefix(baseUrl)
                 } else {
@@ -478,7 +491,7 @@ class AV1Encodes :
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // VIDEO LIST  —  primary: get_ddl API  |  fallback: direct download link
+    // VIDEO LIST
     // ══════════════════════════════════════════════════════════════════════════
 
     override fun videoListRequest(episode: SEpisode) = GET(baseUrl + episode.url, headers)
@@ -488,7 +501,6 @@ class AV1Encodes :
         val episodeUrl = episode.url
         Log.d(TAG, "getVideoList: episode.url=$episodeUrl")
 
-        // episode.url = /download/slug/season/res/filename.mkv?token=xxx
         val encodedFilename = episodeUrl.substringBefore("?").substringAfterLast("/")
         val filename = try {
             URLDecoder.decode(encodedFilename, "UTF-8")
@@ -499,7 +511,6 @@ class AV1Encodes :
 
         val downloadPageUrl = baseUrl + episodeUrl
 
-        // ── Step 1: Visit the download page to get x-ddl-token from HTML ─────
         Log.d(TAG, "getVideoList: fetching download page → $downloadPageUrl")
         val pageHtml = try {
             val resp = client.newCall(
@@ -516,7 +527,6 @@ class AV1Encodes :
             return fallbackDirectUrl(episodeUrl, filename)
         }
 
-        // x-ddl-token is embedded in the HTML, e.g.: ddlToken = "AAAA..."
         val ddlToken = Regex("""['"](A{4,}[A-Za-z0-9_\-]{10,})['""]""").find(pageHtml)
             ?.groupValues?.get(1)
             ?: run {
@@ -525,7 +535,6 @@ class AV1Encodes :
             }
         Log.d(TAG, "getVideoList: ddlToken=$ddlToken")
 
-        // ── Step 2: Call get_ddl with proper Referer + X-Ddl-Token ──────────
         val ddlUrl = "$baseUrl/get_ddl/$encodedFilename"
         Log.d(TAG, "getVideoList: calling get_ddl → $ddlUrl")
         val ddlRaw = try {
@@ -562,8 +571,6 @@ class AV1Encodes :
             return fallbackDirectUrl(episodeUrl, filename)
         }
 
-        // ── Step 3: Follow watch_link /r/ redirect → get CDN watch URL ──────
-        // Then build DASH MPD URL by replacing /watch/ with /dash/ + /manifest.mpd
         val videos = mutableListOf<Video>()
 
         val resLabel = Regex("""\[(\d+p)]""").find(filename)?.groupValues?.get(1) ?: prefQuality
@@ -573,12 +580,10 @@ class AV1Encodes :
         val sizeLabel = ddl.fileSize?.let { " · $it" } ?: ""
         val qualLabel = "AV1 · $resLabel$audioSuffix$sizeLabel"
 
-        // Subtitles come from the CDN stream base; we'll attach after resolving watch URL
         fun resolveRedirect(path: String?): String? {
             if (path.isNullOrBlank()) return null
             val url = if (path.startsWith("/")) "$baseUrl$path" else path
             return try {
-                // OkHttp follows redirects by default; just make the call and get final URL
                 val resp = client.newCall(GET(url, headers.newBuilder().set("Referer", "$baseUrl/").build()))
                     .execute()
                 val finalUrl = resp.request.url.toString()
@@ -591,26 +596,20 @@ class AV1Encodes :
             }
         }
 
-        // watch_link → cdn0X.av1encodes.com/watch/TOKEN → derive /dash/TOKEN/manifest.mpd
         val watchUrl = resolveRedirect(ddl.watchLink)
         if (watchUrl != null && watchUrl.contains("/watch/")) {
             val dashBase = watchUrl.replace("/watch/", "/dash/")
             val mpdUrl = "$dashBase/manifest.mpd"
             Log.d(TAG, "getVideoList: DASH MPD → $mpdUrl")
-
-            // Subtitles are at stream base /stream/sub_N.vtt — but those 404 externally,
-            // so we skip them to avoid mpv errors (as seen in earlier logcat)
             videos.add(Video(mpdUrl, "$qualLabel · DASH", mpdUrl))
         }
 
-        // stream_link → direct CDN stream URL (also DASH base)
         val streamUrl = resolveRedirect(ddl.streamLink)
         if (streamUrl != null && streamUrl != watchUrl) {
             Log.d(TAG, "getVideoList: stream URL → $streamUrl")
             videos.add(Video(streamUrl, "$qualLabel · Stream", streamUrl))
         }
 
-        // download_link → direct file download
         val dlUrl = resolveRedirect(ddl.downloadLink)
         if (dlUrl != null) {
             Log.d(TAG, "getVideoList: download URL → $dlUrl")
@@ -706,22 +705,11 @@ class AV1Encodes :
     // ══════════════════════════════════════════════════════════════════════════
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Note: Sort and Type cannot be combined"),
+        AnimeFilter.Header("Note: Genre overrides Sort and Type"),
         SortFilter(),
         TypeFilter(),
+        GenreFilter(),
     )
-
-    private class SortFilter :
-        AnimeFilter.Select<String>(
-            "Sort By",
-            arrayOf("Latest Added", "A–Z", "Z–A", "Episode Count"),
-        )
-
-    private class TypeFilter :
-        AnimeFilter.Select<String>(
-            "Audio Type (overrides Sort)",
-            arrayOf("All", "Sub only (Airing)", "Dual audio (Airing)"),
-        )
 
     // ══════════════════════════════════════════════════════════════════════════
     // PREFERENCES
@@ -743,7 +731,5 @@ class AV1Encodes :
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1920 x 1080"
-        private val SORT_VALUES = arrayOf("", "a-z", "z-a", "episodes")
-        private val TYPE_VALUES = arrayOf("", "sub", "dual")
     }
 }
