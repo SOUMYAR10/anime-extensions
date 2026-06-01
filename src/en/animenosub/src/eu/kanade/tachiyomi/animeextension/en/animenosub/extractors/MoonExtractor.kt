@@ -16,11 +16,12 @@ import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import java.security.KeyPair
 import java.security.KeyPairGenerator
+import java.security.SecureRandom
 import java.security.Signature
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
-import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -34,6 +35,15 @@ class MoonExtractor(
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    companion object {
+        /** Lazily initialized once and reused across all requests — avoids per-request keygen cost */
+        val keyPair: KeyPair by lazy {
+            val kpg = KeyPairGenerator.getInstance("EC")
+            kpg.initialize(ECGenParameterSpec("secp256r1"))
+            kpg.generateKeyPair()
+        }
     }
 
     fun videosFromUrl(url: String, prefix: String): List<Video> {
@@ -70,7 +80,6 @@ class MoonExtractor(
                 ?: return emptyList()
 
             val embedHost = embedUrl.toHttpUrl().host
-            // Get video path prefix (e.g. "3vm", "vest") from embed URL
             val embedPathPrefix = embedUrl.toHttpUrl().pathSegments.firstOrNull { it.isNotEmpty() } ?: "e"
             val embedReferer = "https://$embedHost/$embedPathPrefix/$videoId"
 
@@ -97,19 +106,14 @@ class MoonExtractor(
             val challengeId = challengeResponse.challengeId
             val nonce = challengeResponse.nonce
 
-            // Step 3: Generate ECDSA P-256 keypair, sign nonce, POST attest
-            val kpg = KeyPairGenerator.getInstance("EC")
-            kpg.initialize(ECGenParameterSpec("secp256r1"))
-            val keyPair = kpg.generateKeyPair()
+            // Step 3: Use cached keypair, sign nonce, POST attest
             val ecPublicKey = keyPair.public as ECPublicKey
 
-            // Sign the nonce bytes with the private key (SHA256withECDSA)
             val nonceBytes = decodeB64Url(nonce)
             val signer = Signature.getInstance("SHA256withECDSA")
             signer.initSign(keyPair.private)
             signer.update(nonceBytes)
             val rawDerSig = signer.sign()
-            // Convert DER signature to raw R||S (64 bytes) for the server
             val rawSig = derToRaw(rawDerSig)
             val signatureB64 = encodeB64Url(rawSig)
 
@@ -158,8 +162,9 @@ class MoonExtractor(
                 .set("Referer", embedReferer)
                 .set("Origin", "https://$embedHost")
                 .set("User-Agent", userAgent)
+                .set("Content-Type", "application/json")
                 .set("X-Embed-Origin", siteUrl.removePrefix("https://"))
-                .set("X-Embed-Parent", "https://$host/e/$videoId")
+                .set("X-Embed-Parent", "https://$host/$embedPathPrefix/$videoId")
                 .set("X-Embed-Referer", "$siteUrl/")
                 .build()
 
@@ -233,37 +238,57 @@ class MoonExtractor(
         return Base64.decode(input + padding, Base64.URL_SAFE or Base64.NO_WRAP)
     }
 
-    private fun encodeB64Url(input: ByteArray): String = Base64.encodeToString(input, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun encodeB64Url(input: ByteArray): String =
+        Base64.encodeToString(input, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
-    /** Generate a URL-safe base64 random ID (same format as viewer_hint from server) */
+    /**
+     * Generate a URL-safe base64 random ID using SecureRandom directly —
+     * avoids the hex-string → bytes dance of UUID string manipulation.
+     */
     private fun generateUrlSafeId(): String {
-        val uuid = UUID.randomUUID().toString().replace("-", "")
-        // Convert hex UUID to bytes then base64url — matches server's format
-        val bytes = uuid.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
         return encodeB64Url(bytes)
     }
 
     /**
      * Convert a DER-encoded ECDSA signature to raw R||S format (64 bytes for P-256).
-     * DER format: 0x30 [total-len] 0x02 [r-len] [r-bytes] 0x02 [s-len] [s-bytes]
+     * DER format: 0x30 [len] 0x02 [r-len] [r-bytes] 0x02 [s-len] [s-bytes]
+     *
+     * Validates tags and bounds before slicing to avoid IndexOutOfBoundsException.
      */
     private fun derToRaw(der: ByteArray): ByteArray {
-        var offset = 2 // skip 0x30 and total length
-        val rLen = der[offset + 1].toInt() and 0xFF
-        offset += 2
-        val rBytes = der.copyOfRange(offset, offset + rLen)
-        offset += rLen
-        val sLen = der[offset + 1].toInt() and 0xFF
-        offset += 2
-        val sBytes = der.copyOfRange(offset, offset + sLen)
-        // Pad/trim to 32 bytes each
+        var i = 0
+        require(der.size > 2 && der[i++] == 0x30.toByte()) { "DER: expected SEQUENCE tag 0x30" }
+
+        // Skip length (short or long form)
+        val seqLen = der[i].toInt() and 0xFF
+        i++
+        if (seqLen and 0x80 != 0) {
+            // Long form: next (seqLen & 0x7F) bytes encode the actual length
+            i += seqLen and 0x7F
+        }
+
+        // Parse R
+        require(i < der.size && der[i++] == 0x02.toByte()) { "DER: expected INTEGER tag 0x02 for R" }
+        val rLen = der[i++].toInt() and 0xFF
+        require(i + rLen <= der.size) { "DER: R length $rLen exceeds buffer" }
+        val rBytes = der.copyOfRange(i, i + rLen)
+        i += rLen
+
+        // Parse S
+        require(i < der.size && der[i++] == 0x02.toByte()) { "DER: expected INTEGER tag 0x02 for S" }
+        val sLen = der[i++].toInt() and 0xFF
+        require(i + sLen <= der.size) { "DER: S length $sLen exceeds buffer" }
+        val sBytes = der.copyOfRange(i, i + sLen)
+
         return pad32(rBytes) + pad32(sBytes)
     }
 
     private fun pad32(b: ByteArray): ByteArray = when {
         b.size == 32 -> b
-        b.size > 32 -> b.copyOfRange(b.size - 32, b.size) // trim leading zero
-        else -> ByteArray(32 - b.size) + b // left-pad with zeros
+        b.size > 32 -> b.copyOfRange(b.size - 32, b.size)
+        else -> ByteArray(32 - b.size) + b
     }
 
     private fun unsignedBigIntBytes(n: java.math.BigInteger, size: Int): ByteArray {
