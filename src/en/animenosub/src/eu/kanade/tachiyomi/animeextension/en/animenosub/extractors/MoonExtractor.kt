@@ -238,8 +238,7 @@ class MoonExtractor(
         return Base64.decode(input + padding, Base64.URL_SAFE or Base64.NO_WRAP)
     }
 
-    private fun encodeB64Url(input: ByteArray): String =
-        Base64.encodeToString(input, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun encodeB64Url(input: ByteArray): String = Base64.encodeToString(input, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     /**
      * Generate a URL-safe base64 random ID using SecureRandom directly —
