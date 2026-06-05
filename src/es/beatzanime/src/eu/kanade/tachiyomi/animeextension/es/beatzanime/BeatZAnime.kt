@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.useAsJsoup
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -42,7 +42,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val seen = mutableSetOf<String>()
         val animes = document.select(popularAnimeSelector()).mapNotNull { el ->
             val href = el.selectFirst("a.top-views-poster")?.attr("href")
@@ -53,9 +53,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
         return AnimesPage(animes, hasNextPage = false)
     }
 
-    // popularAnimeNextPageSelector is never reached (hasNextPage is always false above)
-    // but the abstract method must be implemented.
-    override fun popularAnimeNextPageSelector(): String? = null
+    override fun popularAnimeNextPageSelector() = throw UnsupportedOperationException()
 
     // =============================== Latest ===============================
 
@@ -111,7 +109,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
      */
     override fun searchAnimeParse(response: Response): AnimesPage {
         val params = response.request.tag(SearchParams::class.java) ?: SearchParams()
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val query = params.query.normalizeAccents()
         val fuente = params.fuente.normalizeAccents()
         val estado = params.estado.normalizeAccents()
@@ -207,7 +205,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
      * getVideoList() can return a Video object without an extra HTTP call.
      */
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val rows = document.select("#collapseExampled tbody tr")
         if (rows.isEmpty()) return emptyList()
 
@@ -217,8 +215,8 @@ class BeatZAnime : ParsedAnimeHttpSource() {
             val cells = row.select("td")
             if (cells.size < 5) return@forEachIndexed
 
-            val format = cells[1].text().trim().lowercase()
-            val typeLabel = cells[2].text().trim().lowercase()
+            val format = cells[1].text().lowercase()
+            val typeLabel = cells[2].text().lowercase()
 
             val isPlayable = typeLabel == "video" || PLAYABLE_FORMATS.any { format == it }
             if (!isPlayable) return@forEachIndexed
@@ -230,7 +228,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
 
             // text() is more robust than ownText() for cells whose content is
             // a plain whitespace-padded text node with no child elements.
-            val rawName = cells[0].text().trim()
+            val rawName = cells[0].text()
                 .takeIf { it.isNotBlank() }
                 ?: URLDecoder.decode(
                     fileUrl.substringAfterLast("/").substringBeforeLast("."),
@@ -250,7 +248,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
                     name = rawName
                     url = fileUrl
                     episode_number = epNumber
-                    scanlator = cells[3].text().trim()
+                    scanlator = cells[3].text()
                 },
             )
         }
