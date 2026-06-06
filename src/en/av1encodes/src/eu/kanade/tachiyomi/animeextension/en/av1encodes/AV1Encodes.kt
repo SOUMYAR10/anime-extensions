@@ -11,15 +11,12 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelMapNotNullBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import okhttp3.Dispatcher
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -147,8 +144,7 @@ class AV1Encodes :
                 }
         }
 
-        fetchMissingCovers(animes)
-        return animes
+        return animes.fetchMissingCovers()
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -320,37 +316,28 @@ class AV1Encodes :
         val hasNextPage = doc.selectFirst(
             "a[rel=next], .pagination .next, a:contains(Next)",
         ) != null
-        fetchMissingCovers(animes)
-        return AnimesPage(animes, hasNextPage)
+
+        return AnimesPage(animes.fetchMissingCovers(), hasNextPage)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
     // N+1 COVER FETCHER
     // ══════════════════════════════════════════════════════════════════════════
 
-    private fun fetchMissingCovers(animes: List<SAnime>) {
-        val missing = animes.filter { it.thumbnail_url == null }
-        if (missing.isEmpty()) return
-        runBlocking {
-            withContext(Dispatchers.IO) {
-                missing.map { anime ->
-                    async {
-                        try {
-                            client.newCall(GET(baseUrl + anime.url, headers)).execute().use { resp ->
-                                if (!resp.isSuccessful) return@use
-                                val doc = Jsoup.parse(resp.bodyString())
-                                val img = doc.selectFirst(
-                                    "img.anime-poster, img.poster, .anime-hero img, " +
-                                        "[class*='poster'] img, [class*='hero'] img, main img",
-                                )
-                                anime.thumbnail_url =
-                                    img?.attr("abs:data-src")?.ifBlank { img.attr("abs:src") }
-                                        ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }.awaitAll()
-            }
+    private fun List<SAnime>.fetchMissingCovers(): List<SAnime> {
+        return parallelMapNotNullBlocking { anime ->
+            runCatching {
+                if (anime.thumbnail_url != null) return@runCatching anime
+                val doc = client.newCall(animeDetailsRequest(anime)).awaitSuccess().useAsJsoup()
+                val img = doc.selectFirst(
+                    "img.anime-poster, img.poster, .anime-hero img, " +
+                        "[class*='poster'] img, [class*='hero'] img, main img",
+                )
+                anime.thumbnail_url =
+                    img?.attr("abs:data-src")?.ifBlank { img.attr("abs:src") }
+                        ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
+                anime
+            }.getOrNull()
         }
     }
 
