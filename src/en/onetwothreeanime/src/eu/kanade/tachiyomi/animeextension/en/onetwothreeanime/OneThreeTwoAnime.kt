@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.useAsJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
@@ -83,7 +83,7 @@ class OneThreeTwoAnime :
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/home", freshHeaders())
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val rankingSection = doc.selectFirst(".widget.ranking .content[data-name=\"day\"]")
             ?: return AnimesPage(emptyList(), false)
         val animes = rankingSection.select("div.item").mapNotNull(::animeFromCard)
@@ -105,7 +105,7 @@ class OneThreeTwoAnime :
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/home", freshHeaders())
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
 
         // Respect Sub/Dub preference when picking the Latest tab
         val tabName = when (preferences.getString(PREF_SUB_DUB_KEY, PREF_SUB_DUB_DEFAULT)) {
@@ -161,7 +161,7 @@ class OneThreeTwoAnime :
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val animes = doc.select("div.film-list div.item").mapNotNull(::animeFromCard)
         val hasNext = doc.selectFirst(".paging-wrapper a.next") != null
         return AnimesPage(animes, hasNext)
@@ -173,7 +173,7 @@ class OneThreeTwoAnime :
 
     override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, freshHeaders())
     override fun animeDetailsParse(response: Response): SAnime {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         return SAnime.create().apply {
             title = doc.selectFirst("h2.title")?.text()
                 ?: doc.selectFirst("h1.title")?.ownText()?.trim()
