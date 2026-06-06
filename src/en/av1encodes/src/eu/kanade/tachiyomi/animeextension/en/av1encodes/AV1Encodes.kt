@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parallelMapNotNullBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
@@ -395,26 +396,14 @@ class AV1Encodes :
         Log.d(TAG, "episodeListParse: seasons=$seasons")
 
         val encodedRes = URLEncoder.encode(prefQuality, "UTF-8").replace("+", "%20")
-        val allEpisodes = mutableListOf<SEpisode>()
 
         val episodeNumberRegex = Regex("""E(\d+)""", RegexOption.IGNORE_CASE)
 
-        for (season in seasons.sortedByDescending { it.toIntOrNull() ?: 0 }) {
+        return seasons.sortedByDescending { it.toIntOrNull() ?: 0 }.parallelCatchingFlatMapBlocking { season ->
             val epPageUrl = "$baseUrl/episodes/$slug/$season/$encodedRes"
             Log.d(TAG, "episodeListParse: fetching episodes page → $epPageUrl")
 
-            val epHtml = try {
-                val resp = client.newCall(GET(epPageUrl, headers)).execute()
-                Log.d(TAG, "episodeListParse: episodes page response code=${resp.code}")
-                if (!resp.isSuccessful) {
-                    resp.close()
-                    continue
-                }
-                resp.bodyString()
-            } catch (e: Exception) {
-                Log.e(TAG, "episodeListParse: failed to fetch $epPageUrl — ${e.message}")
-                continue
-            }
+            val epHtml = client.newCall(GET(epPageUrl, headers)).awaitSuccess().bodyString()
 
             val epDoc = Jsoup.parse(epHtml)
             val downloadLinks = epDoc.select("a[href*='/download/']")
@@ -424,46 +413,32 @@ class AV1Encodes :
                 Log.w(TAG, "episodeListParse: no <a> links found, falling back to regex on raw HTML")
                 val filenames = extractFilenames(epHtml)
                 Log.d(TAG, "episodeListParse: regex found ${filenames.size} filenames")
-                filenames.sortedByDescending { parseEpisodeNumber(it) }.forEach { filename ->
+                return@parallelCatchingFlatMapBlocking filenames.sortedByDescending { parseEpisodeNumber(it) }.map { filename ->
                     val encodedFilename = URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
-                    allEpisodes.add(
-                        SEpisode.create().apply {
-                            url = "/download/$slug/$season/$encodedRes/$encodedFilename"
-                            name = buildEpisodeLabel(filename, season)
-                            episode_number = parseEpisodeNumber(filename)
-                        },
-                    )
+                    SEpisode.create().apply {
+                        setUrlWithoutDomain("/download/$slug/$season/$encodedRes/$encodedFilename")
+                        name = buildEpisodeLabel(filename, season)
+                        episode_number = parseEpisodeNumber(filename)
+                    }
                 }
-                continue
             }
 
             downloadLinks.sortedByDescending { link ->
                 episodeNumberRegex
                     .find(link.attr("href"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            }.forEach { link ->
+            }.map { link ->
                 val fullHref = link.attr("href")
                 Log.d(TAG, "episodeListParse: episode link → $fullHref")
 
-                val epUrl = if (fullHref.startsWith("http")) {
-                    fullHref.removePrefix(baseUrl)
-                } else {
-                    fullHref
-                }
-
                 val filename = Uri.decode(fullHref.substringAfterLast("/").substringBefore("?"))
 
-                allEpisodes.add(
-                    SEpisode.create().apply {
-                        url = epUrl
-                        name = buildEpisodeLabel(filename, season)
-                        episode_number = parseEpisodeNumber(filename)
-                    },
-                )
+                SEpisode.create().apply {
+                    setUrlWithoutDomain(fullHref)
+                    name = buildEpisodeLabel(filename, season)
+                    episode_number = parseEpisodeNumber(filename)
+                }
             }
         }
-
-        Log.d(TAG, "episodeListParse: total episodes returned = ${allEpisodes.size}")
-        return allEpisodes
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -482,15 +457,10 @@ class AV1Encodes :
 
         Log.d(TAG, "getVideoList: fetching download page → $downloadPageUrl")
         val pageHtml = try {
-            val resp = client.newCall(
+            client.newCall(
                 GET(downloadPageUrl, headers.newBuilder().set("Referer", "$baseUrl/").build()),
-            ).execute()
-            Log.d(TAG, "getVideoList: download page code=${resp.code}")
-            if (!resp.isSuccessful) {
-                resp.close()
-                return fallbackDirectUrl(episodeUrl, filename)
-            }
-            resp.bodyString()
+            ).awaitSuccess()
+                .bodyString()
         } catch (e: Exception) {
             Log.e(TAG, "getVideoList: download page failed — ${e.message}")
             return fallbackDirectUrl(episodeUrl, filename)
@@ -507,7 +477,7 @@ class AV1Encodes :
         val ddlUrl = "$baseUrl/get_ddl/$encodedFilename"
         Log.d(TAG, "getVideoList: calling get_ddl → $ddlUrl")
         val ddlRaw = try {
-            val resp = client.newCall(
+            client.newCall(
                 GET(
                     ddlUrl,
                     headers.newBuilder()
@@ -516,13 +486,8 @@ class AV1Encodes :
                         .set("X-Ddl-Token", ddlToken)
                         .build(),
                 ),
-            ).execute()
-            Log.d(TAG, "getVideoList: get_ddl code=${resp.code}")
-            if (!resp.isSuccessful) {
-                resp.close()
-                return fallbackDirectUrl(episodeUrl, filename)
-            }
-            resp.bodyString()
+            ).awaitSuccess()
+                .bodyString()
         } catch (e: Exception) {
             Log.e(TAG, "getVideoList: get_ddl failed — ${e.message}")
             return fallbackDirectUrl(episodeUrl, filename)
@@ -549,14 +514,14 @@ class AV1Encodes :
         val sizeLabel = ddl.fileSize?.let { " · $it" } ?: ""
         val qualLabel = "AV1 · $resLabel$audioSuffix$sizeLabel"
 
-        fun resolveRedirect(path: String?): String? {
+        suspend fun resolveRedirect(path: String?): String? {
             if (path.isNullOrBlank()) return null
             val url = if (path.startsWith("/")) "$baseUrl$path" else path
             return try {
-                val resp = client.newCall(GET(url, headers.newBuilder().set("Referer", "$baseUrl/").build()))
-                    .execute()
-                val finalUrl = resp.request.url.toString()
-                resp.close()
+                val finalUrl = client.newCall(GET(url, headers.newBuilder().set("Referer", "$baseUrl/").build()))
+                    .awaitSuccess().use { resp ->
+                        resp.request.url.toString()
+                    }
                 Log.d(TAG, "getVideoList: redirect $path → $finalUrl")
                 finalUrl
             } catch (e: Exception) {
