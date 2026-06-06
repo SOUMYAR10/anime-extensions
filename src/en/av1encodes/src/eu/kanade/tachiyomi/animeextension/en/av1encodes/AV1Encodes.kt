@@ -89,10 +89,14 @@ class AV1Encodes :
             }
         }
 
+        val seasonRegex = Regex("""\[S\d""")
+        val animeNameRegex = Regex("""\[S\d{1,2}(?:-E\d+)?]\s*([^\[]+?)\s*\[""")
+        val specialCharactersRegex = Regex("[^a-z0-9]+")
+
         searchContext.select("a[href*='/anime/'],div[class*='card'],div[class*='item'],li")
             .filter { el ->
                 val text = el.text().trim()
-                text.contains(Regex("""\[S\d""")) || text.length in 10..200
+                text.contains(seasonRegex) || text.length in 10..200
             }
             .forEach { el ->
                 val link = el.selectFirst("a[href*='/anime/']")
@@ -104,7 +108,7 @@ class AV1Encodes :
                     if (url.startsWith("/anime/") && seen.add(url)) {
                         animes.add(
                             SAnime.create().apply {
-                                this.url = url
+                                setUrlWithoutDomain(url)
                                 title = extractCleanTitle(el.text())
                                 thumbnail_url = getListImageUrl(el)
                             },
@@ -114,28 +118,28 @@ class AV1Encodes :
                 }
 
                 val animeName = extractCleanTitle(el.text().trim())
-                val slug = animeName.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "-").trim('-')
+                val slug = animeName.lowercase(Locale.US).replace(specialCharactersRegex, "-").trim('-')
                 if (slug.length < 3 || !seen.add("/anime/$slug")) return@forEach
                 animes.add(
                     SAnime.create().apply {
-                        url = "/anime/$slug"
+                        setUrlWithoutDomain("/anime/$slug")
                         title = animeName
                     },
                 )
             }
 
         if (animes.isEmpty()) {
-            Regex("""\[S\d{1,2}(?:-E\d+)?]\s*([^\[]+?)\s*\[""").findAll(searchContext.text())
+            animeNameRegex.findAll(searchContext.text())
                 .map { it.groupValues[1].trim() }
                 .distinct()
                 .take(20)
                 .forEach { animeName ->
                     val slug = animeName.lowercase(Locale.US)
-                        .replace(Regex("[^a-z0-9]+"), "-").trim('-')
+                        .replace(specialCharactersRegex, "-").trim('-')
                     if (slug.length >= 3 && seen.add("/anime/$slug")) {
                         animes.add(
                             SAnime.create().apply {
-                                url = "/anime/$slug"
+                                setUrlWithoutDomain("/anime/$slug")
                                 title = extractCleanTitle(animeName)
                             },
                         )
@@ -164,7 +168,7 @@ class AV1Encodes :
             SAnime.create().apply {
                 url = href
                 title = a.text().trim()
-                thumbnail_url = card.selectFirst("div.poster-wrap > img, img")?.let { img ->
+                thumbnail_url = card.selectFirst("div.poster-wrap > img, img")?.let { img: Element ->
                     img.attr("abs:data-src").ifBlank { null }
                         ?: img.attr("abs:data-lazy-src").ifBlank { null }
                         ?: img.attr("abs:src").ifBlank { null }
@@ -252,7 +256,7 @@ class AV1Encodes :
                 SAnime.create().apply {
                     url = href
                     title = (card.selectFirst("h3, h4")?.text() ?: a.text()).trim()
-                    thumbnail_url = img?.let {
+                    thumbnail_url = img?.let { it: Element ->
                         it.attr("abs:data-src").ifBlank { null }
                             ?: it.attr("abs:data-lazy-src").ifBlank { null }
                             ?: it.attr("abs:src").ifBlank { null }
@@ -279,7 +283,7 @@ class AV1Encodes :
                 SAnime.create().apply {
                     url = href
                     title = h3.text().trim()
-                    thumbnail_url = img?.let {
+                    thumbnail_url = img?.let { it: Element ->
                         it.attr("abs:data-src").ifBlank { null }
                             ?: it.attr("abs:data-lazy-src").ifBlank { null }
                             ?: it.attr("abs:src").ifBlank { null }
@@ -406,6 +410,8 @@ class AV1Encodes :
         val encodedRes = URLEncoder.encode(prefQuality, "UTF-8").replace("+", "%20")
         val allEpisodes = mutableListOf<SEpisode>()
 
+        val episodeNumberRegex = Regex("""E(\d+)""", RegexOption.IGNORE_CASE)
+
         for (season in seasons.sortedByDescending { it.toIntOrNull() ?: 0 }) {
             val epPageUrl = "$baseUrl/episodes/$slug/$season/$encodedRes"
             Log.d(TAG, "episodeListParse: fetching episodes page → $epPageUrl")
@@ -445,7 +451,7 @@ class AV1Encodes :
             }
 
             downloadLinks.sortedByDescending { link ->
-                Regex("""E(\d+)""", RegexOption.IGNORE_CASE)
+                episodeNumberRegex
                     .find(link.attr("href"))?.groupValues?.get(1)?.toIntOrNull() ?: 0
             }.forEach { link ->
                 val fullHref = link.attr("href")
@@ -624,6 +630,7 @@ class AV1Encodes :
     // ══════════════════════════════════════════════════════════════════════════
     // EXTRACTION HELPERS
     // ══════════════════════════════════════════════════════════════════════════
+    private val filenameRegex by lazy { Regex("""([a-zA-Z0-9_ \-\[\]().%]+?\.(?:mkv|mp4))""", RegexOption.IGNORE_CASE) }
 
     private fun extractFilenames(html: String): List<String> {
         val filenames = mutableSetOf<String>()
@@ -638,33 +645,43 @@ class AV1Encodes :
         Jsoup.parse(html).select("a[href*='/download/']").forEach {
             addDecoded(it.attr("href").substringAfterLast("/").substringBefore("?"))
         }
-        Regex("""([a-zA-Z0-9_ \-\[\]().%]+?\.(?:mkv|mp4))""", RegexOption.IGNORE_CASE)
+        filenameRegex
             .findAll(html).forEach { addDecoded(it.groupValues[1]) }
         return filenames.toList()
     }
 
+    private val episodeNameRegex by lazy { Regex("""\[(?:S\d+-)?E(\d+)]\s*(.+?)\s*\[""") }
+    private val subdubRegex by lazy { Regex("""\[(Dual|Sub|Dub|English Dub)]""", RegexOption.IGNORE_CASE) }
+    private val qualityRegex by lazy { Regex("""\[\d{3,4}p].*""") }
+
     private fun buildEpisodeLabel(filename: String, season: String): String {
-        val epMatch = Regex("""\[(?:S\d+-)?E(\d+)]\s*(.+?)\s*\[""").find(filename)
+        val epMatch = episodeNameRegex.find(filename)
         return if (epMatch != null) {
             val e = epMatch.groupValues[1]
             val titlePart = epMatch.groupValues[2].trim()
-            val audioTag = Regex("""\[(Dual|Sub|Dub|English Dub)]""", RegexOption.IGNORE_CASE)
+            val audioTag = subdubRegex
                 .find(filename)?.groupValues?.get(1) ?: ""
             "Season $season Ep $e - $titlePart${if (audioTag.isNotBlank()) " [$audioTag]" else ""}"
         } else {
-            val cleanName = filename.replace(Regex("""\[\d{3,4}p].*"""), "")
+            val cleanName = filename.replace(qualityRegex, "")
                 .substringBeforeLast(".").trim()
             if (season != "1" && season.isNotBlank()) "Season $season - $cleanName" else cleanName
         }
     }
 
-    private fun parseEpisodeNumber(filename: String): Float = Regex("""\[(?:S\d+-)?E(\d+)]""").find(filename)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+    private val episodeNumberRegex by lazy { Regex("""\[(?:S\d+-)?E(\d+)]""") }
+    private fun parseEpisodeNumber(filename: String): Float = episodeNumberRegex.find(filename)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+
+    private val cleanTitleRegex1 by lazy { Regex("""\s*·\s*\d+\s*downloads?.*""", RegexOption.IGNORE_CASE) }
+    private val cleanTitleRegex2 by lazy { Regex("""^\[[a-zA-Z0-9_\-]+]\s*""") }
+    private val cleanTitleRegex3 by lazy { Regex("""\s*\[\d{3,4}p].*""", RegexOption.IGNORE_CASE) }
+    private val cleanTitleRegex4 by lazy { Regex("""\.(mkv|mp4)$""", RegexOption.IGNORE_CASE) }
 
     private fun extractCleanTitle(raw: String): String {
-        var cleaned = raw.replace(Regex("""\s*·\s*\d+\s*downloads?.*""", RegexOption.IGNORE_CASE), "")
-        cleaned = cleaned.replace(Regex("""^\[[a-zA-Z0-9_\-]+]\s*"""), "")
-        cleaned = cleaned.replace(Regex("""\s*\[\d{3,4}p].*""", RegexOption.IGNORE_CASE), "")
-        cleaned = cleaned.replace(Regex("""\.(mkv|mp4)$""", RegexOption.IGNORE_CASE), "")
+        var cleaned = raw.replace(cleanTitleRegex1, "")
+        cleaned = cleaned.replace(cleanTitleRegex2, "")
+        cleaned = cleaned.replace(cleanTitleRegex3, "")
+        cleaned = cleaned.replace(cleanTitleRegex4, "")
         return cleaned.trim()
     }
 
@@ -678,10 +695,12 @@ class AV1Encodes :
         return extractBg(anchor) ?: anchor.allElements.firstNotNullOfOrNull { extractBg(it) }
     }
 
+    private val backgroundUrlRegex by lazy { Regex("""url\(['"](.*?)['"]\)""") }
+
     private fun extractBg(el: Element): String? {
         val style = el.attr("style")
         if (!style.contains("background", ignoreCase = true)) return null
-        val match = Regex("""url\(['"](.*?)['"]\)""").find(style) ?: return null
+        val match = backgroundUrlRegex.find(style) ?: return null
         val url = match.groupValues[1].ifBlank { return null }
         return if (url.startsWith("http")) url else "$baseUrl/${url.removePrefix("/")}"
     }
