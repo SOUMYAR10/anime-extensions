@@ -163,7 +163,7 @@ class AV1Encodes :
             }
             if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
             SAnime.create().apply {
-                url = href
+                setUrlWithoutDomain(href)
                 title = a.text().trim()
                 thumbnail_url = card.selectFirst("div.poster-wrap > img, img")?.let { img: Element ->
                     img.attr("abs:data-src").ifBlank { null }
@@ -251,7 +251,7 @@ class AV1Encodes :
                 if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
                 val img = card.selectFirst("div.poster-wrap > img, img")
                 SAnime.create().apply {
-                    url = href
+                    setUrlWithoutDomain(href)
                     title = (card.selectFirst("h3, h4")?.text() ?: a.text()).trim()
                     thumbnail_url = img?.let { it: Element ->
                         it.attr("abs:data-src").ifBlank { null }
@@ -278,7 +278,7 @@ class AV1Encodes :
                 if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
                 val img = block.parent()?.selectFirst("img") ?: block.selectFirst("img")
                 SAnime.create().apply {
-                    url = href
+                    setUrlWithoutDomain(href)
                     title = h3.text().trim()
                     thumbnail_url = img?.let { it: Element ->
                         it.attr("abs:data-src").ifBlank { null }
@@ -309,7 +309,7 @@ class AV1Encodes :
             if (!href.startsWith("/anime/") || href == "/anime/") return@mapNotNull null
             val titleText = a.text().trim().ifBlank { return@mapNotNull null }
             SAnime.create().apply {
-                url = href
+                setUrlWithoutDomain(href)
                 title = titleText
             }
         }.distinctBy { it.url }
