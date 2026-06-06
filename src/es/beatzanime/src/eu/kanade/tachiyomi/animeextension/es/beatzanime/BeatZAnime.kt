@@ -42,7 +42,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
+        val animes = response.useAsJsoup()
         .select(popularAnimeSelector())
         .map { popularAnimeFromElement(it) }
         .distinctBy { it.url }
