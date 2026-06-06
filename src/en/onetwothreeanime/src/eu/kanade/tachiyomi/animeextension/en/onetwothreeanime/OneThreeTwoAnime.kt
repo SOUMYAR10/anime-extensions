@@ -10,10 +10,10 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import keiyoushi.utils.useAsJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
