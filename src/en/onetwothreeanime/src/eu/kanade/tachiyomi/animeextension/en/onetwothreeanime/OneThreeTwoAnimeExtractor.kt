@@ -8,55 +8,6 @@ import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
-// =============================================================================
-//  OneThreeTwoAnimeExtractor  —  confirmed flow from HAR + logcat analysis
-//
-//  Step 1: GET /ajax/film/sv?id={slug}
-//    → JSON { "html": "..." } with <span class="tab" data-name="0"> etc.
-//    Server IDs: "0" = F5-HQ, "10" = No Ads 4, etc.
-//
-//  Step 2: GET /ajax/episode/info?epr={slug}/{ep}/{serverId}
-//    → JSON {
-//        "target":  "https://play2.echovideo.ru/embed-3/<base64>",
-//        "grabber": "https://123anime.ru/ajax/episode/token/info?tkn=XXXXX&server="
-//      }
-//    NOTE: The grabber token endpoint always returns an EMPTY body (HTTP 200).
-//    The site requires a browser session cookie which OkHttp doesn't have.
-//    → SKIP the grabber entirely. Use "target" directly.
-//
-//  Step 3: Fetch the embed-3 wrapper page:
-//    GET https://play2.echovideo.ru/embed-3/<base64>
-//    → HTML contains:  var zrpart2 = '<inner_base64>';
-//    This base64 is the real player token. The page builds two player URLs:
-//      /hs/<inner_base64>          ← JW Player or Plyr depending on ?pl_usn
-//      /sbv2/<inner_base64>        ← alternative soft-sub player (bonus)
-//
-//  Step 4: Fetch the actual player page using the inner base64:
-//
-//    JW Player  → GET /hs/<inner_base64>   (no extra param)
-//      HTML:  <div id="mg-player" data-id="<getSources_base64>">
-//      Then:  GET /hs/getSources_z?id=<getSources_base64>   (primary, newer)
-//             OR  GET /hs/getSources?id=<getSources_base64>  (fallback)
-//             → JSON { "sources": "https://...master.m3u8" }
-//
-//    Legacy (Plyr)  → GET /hs/<inner_base64>?pl_usn=1
-//      HTML:  <div id="sources" style="display:none;">
-//             {"sources":"https://...m3u8"}
-//             </div>
-//      → Parse JSON directly from the div. No extra request needed.
-//
-//  *** FIX: HLS PLAYBACK (videos load but won't play) ***
-//  The CDN (hlsx3cdn.burntburst45.store) enforces a Referer check.
-//  HAR confirms every successful segment/manifest request has:
-//    Referer: https://play2.echovideo.ru/
-//  Without it, ExoPlayer in Aniyomi receives 403/empty responses and
-//  the spinner just runs forever.
-//  Solution: pass the embed host as the `Referer` header in the Video object.
-//  Aniyomi/ExoPlayer will send it with every HLS manifest + segment request.
-//
-//  Player preference is controlled via PREF_PLAYER_KEY. Default: JW Player.
-// =============================================================================
-
 class OneThreeTwoAnimeExtractor(
     private val client: OkHttpClient,
     private val json: Json,
@@ -98,12 +49,10 @@ class OneThreeTwoAnimeExtractor(
     // ------------------------------------------------------------------ //
 
     fun fetchVideos(animeSlug: String, episodeNum: String): List<Video> {
-        Log.d(TAG, "fetchVideos: slug=$animeSlug ep=$episodeNum player=$preferredPlayer")
         val serverIds = runCatching { fetchServerIds(animeSlug) }.getOrElse {
             Log.e(TAG, "fetchServerIds failed", it)
             emptyList()
         }
-        Log.d(TAG, "fetchVideos: found ${serverIds.size} servers: $serverIds")
         if (serverIds.isEmpty()) return emptyList()
 
         return serverIds.flatMap { (serverLabel, serverId) ->
@@ -122,11 +71,10 @@ class OneThreeTwoAnimeExtractor(
 
     fun fetchServerIds(animeSlug: String): List<Pair<String, String>> {
         val svUrl = "$baseUrl/ajax/film/sv?id=$animeSlug"
-        Log.d(TAG, "fetchServerIds: GET $svUrl")
-        val response = client.newCall(GET(svUrl, headers())).execute()
-        Log.d(TAG, "fetchServerIds: HTTP ${response.code}")
-        if (!response.isSuccessful) return emptyList()
-        val body = response.body.string()
+        val body = client.newCall(GET(svUrl, headers())).execute().use { response ->
+            if (!response.isSuccessful) return emptyList()
+            response.body.string()
+        }
         val svJson = runCatching {
             json.decodeFromString<SvResponseDto>(body)
         }.getOrElse {
@@ -137,7 +85,6 @@ class OneThreeTwoAnimeExtractor(
         val tabs = svDoc.select("span.tab[data-name]").map { tab ->
             Pair(tab.text().trim(), tab.attr("data-name"))
         }
-        Log.d(TAG, "fetchServerIds: tabs=$tabs")
         return tabs
     }
 
@@ -147,17 +94,18 @@ class OneThreeTwoAnimeExtractor(
 
     private fun fetchEpisodeInfo(animeSlug: String, episodeNum: String, serverId: String): EpisodeInfoDto? {
         val infoUrl = "$baseUrl/ajax/episode/info?epr=$animeSlug/$episodeNum/$serverId"
-        Log.d(TAG, "fetchEpisodeInfo: GET $infoUrl")
-        val response = runCatching {
-            client.newCall(GET(infoUrl, headers())).execute()
+        val body = runCatching {
+            client.newCall(GET(infoUrl, headers())).execute().use { response ->
+                if (!response.isSuccessful) {
+                    null
+                } else {
+                    response.body.string()
+                }
+            }
         }.getOrElse {
             Log.e(TAG, "fetchEpisodeInfo: request failed", it)
             return null
-        }
-        Log.d(TAG, "fetchEpisodeInfo: HTTP ${response.code}")
-        if (!response.isSuccessful) return null
-        val body = response.body.string()
-        Log.d(TAG, "fetchEpisodeInfo: body=${body.take(300)}")
+        } ?: return null
         return runCatching {
             json.decodeFromString<EpisodeInfoDto>(body)
         }.getOrElse {
@@ -179,23 +127,15 @@ class OneThreeTwoAnimeExtractor(
         Log.d(TAG, "fetchVideoForServer: server=$serverLabel id=$serverId")
         val info = fetchEpisodeInfo(animeSlug, episodeNum, serverId) ?: return emptyList()
 
-        // The target is always an embed-3 URL.
-        // The grabber token endpoint returns an empty body (no session cookie),
-        // so we skip it and go straight to the embed-3 wrapper page.
         val embedUrl = info.target.takeIf { it.isNotBlank() } ?: run {
             Log.w(TAG, "fetchVideoForServer: no target URL")
             return emptyList()
         }
         Log.d(TAG, "fetchVideoForServer: embed-3 url=${embedUrl.take(80)}")
 
-        // Derive the embed host for use as Referer on CDN requests.
-        // HAR confirms: hlsx3cdn.burntburst45.store requires
-        //   Referer: https://play2.echovideo.ru/
-        // Without this header ExoPlayer's HLS client gets 403/empty responses.
         val embedBase = embedUrl.toHttpBaseOrNull() ?: "https://play2.echovideo.ru"
         val embedHostReferer = "$embedBase/"
 
-        // Step 3: extract the inner base64 token (zrpart2) from embed-3 page
         val innerToken = fetchInnerToken(embedUrl) ?: run {
             Log.w(TAG, "fetchVideoForServer: could not get inner token, falling back to embed URL")
             return listOf(
@@ -210,15 +150,10 @@ class OneThreeTwoAnimeExtractor(
         Log.d(TAG, "fetchVideoForServer: innerToken=${innerToken.take(60)}")
 
         val videos = mutableListOf<Video>()
-
-        // Step 4: resolve the chosen player
         val streamUrl = resolvePlayerPage(embedBase, innerToken)
         Log.d(TAG, "fetchVideoForServer: streamUrl=$streamUrl")
         if (streamUrl != null) {
             val playerTag = if (preferredPlayer == PLAYER_JW) "JW" else "Legacy"
-            // *** THE FIX: pass Referer header pointing to the embed host ***
-            // ExoPlayer will attach it to every .m3u8 and .ts request so the
-            // CDN (hlsx3cdn.burntburst45.store) accepts them.
             videos.add(
                 Video(
                     url = streamUrl,
@@ -229,7 +164,6 @@ class OneThreeTwoAnimeExtractor(
             )
         }
 
-        // Also try the /sbv2/ alternate player as a bonus source
         val sbv2Url = resolveSubv2Player(embedBase, innerToken)
         Log.d(TAG, "fetchVideoForServer: sbv2Url=$sbv2Url")
         if (sbv2Url != null && sbv2Url != streamUrl) {
@@ -244,7 +178,6 @@ class OneThreeTwoAnimeExtractor(
         }
 
         if (videos.isEmpty()) {
-            // Last resort: return the embed-3 URL itself for WebView fallback
             Log.w(TAG, "fetchVideoForServer: all paths failed, returning embed URL")
             videos.add(
                 Video(
@@ -268,9 +201,14 @@ class OneThreeTwoAnimeExtractor(
         val body = runCatching {
             client.newCall(GET(embed3Url, headers("$baseUrl/")))
                 .execute()
-                .also { Log.d(TAG, "fetchInnerToken: HTTP ${it.code}") }
-                .takeIf { it.isSuccessful }
-                ?.body?.string()
+                .use { response ->
+                    Log.d(TAG, "fetchInnerToken: HTTP ${response.code}")
+                    if (response.isSuccessful) {
+                        response.body.string()
+                    } else {
+                        null
+                    }
+                }
         }.getOrElse {
             Log.e(TAG, "fetchInnerToken: request failed", it)
             null
@@ -279,7 +217,6 @@ class OneThreeTwoAnimeExtractor(
         val token = ZRPART2_REGEX.find(body)?.groupValues?.getOrNull(1)
         Log.d(TAG, "fetchInnerToken: zrpart2=${token?.take(60) ?: "NOT FOUND"}")
 
-        // If zrpart2 not found, try extracting /hs/ link directly from the page
         if (token == null) {
             val fallback = HS_LINK_REGEX.find(body)?.groupValues?.getOrNull(1)
             Log.d(TAG, "fetchInnerToken: fallback hs link=${fallback?.take(60) ?: "NOT FOUND"}")
@@ -287,17 +224,6 @@ class OneThreeTwoAnimeExtractor(
         }
         return token
     }
-
-    // ------------------------------------------------------------------ //
-    //  Step 4a: JW Player  →  GET /hs/<token>  (no param)               //
-    //    HTML has data-id="<getSources_base64>" on #mg-player div        //
-    //    Then:  GET /hs/getSources_z?id=<base64>  (primary — newer API)  //
-    //       OR  GET /hs/getSources?id=<base64>    (fallback)             //
-    //           → JSON { "sources": "https://...m3u8" }                 //
-    //                                                                     //
-    //  Step 4b: Legacy/Plyr  →  GET /hs/<token>?pl_usn=1               //
-    //    HTML has <div id="sources">{...}</div>                          //
-    // ------------------------------------------------------------------ //
 
     private fun resolvePlayerPage(embedBase: String, innerToken: String): String? = if (preferredPlayer == PLAYER_JW) {
         resolveJwPlayer(embedBase, innerToken)
@@ -312,9 +238,14 @@ class OneThreeTwoAnimeExtractor(
         val body = runCatching {
             client.newCall(GET(hsUrl, headers("$embedBase/")))
                 .execute()
-                .also { Log.d(TAG, "resolveJwPlayer: HTTP ${it.code}") }
-                .takeIf { it.isSuccessful }
-                ?.body?.string()
+                .use { response ->
+                    Log.d(TAG, "resolveJwPlayer: HTTP ${response.code}")
+                    if (response.isSuccessful) {
+                        response.body.string()
+                    } else {
+                        null
+                    }
+                }
         }.getOrElse {
             Log.e(TAG, "resolveJwPlayer: request failed", it)
             null
@@ -322,21 +253,18 @@ class OneThreeTwoAnimeExtractor(
 
         Log.d(TAG, "resolveJwPlayer: body length=${body.length} snippet=${body.take(150)}")
 
-        // Primary: data-id attribute on #mg-player (try both attribute orders)
         val dataId = (
             DATA_ID_REGEX.find(body)?.groupValues?.getOrNull(1)
                 ?: DATA_ID_REGEX2.find(body)?.groupValues?.getOrNull(1)
             )
         Log.d(TAG, "resolveJwPlayer: data-id=${dataId?.take(60) ?: "null"}")
         if (!dataId.isNullOrBlank()) {
-            // Try getSources_z first (newer API, seen in HAR), then getSources (legacy)
             val result = callGetSources("$embedBase/hs/getSources_z?id=$dataId", hsUrl)
                 ?: callGetSources("$embedBase/hs/getSources?id=$dataId", hsUrl)
             Log.d(TAG, "resolveJwPlayer: getSources result=$result")
             if (result != null) return result
         }
 
-        // Fallback: inline m3u8/mp4
         val fallback = extractM3u8(body) ?: extractMp4(body)
         Log.d(TAG, "resolveJwPlayer: inline fallback=$fallback")
         return fallback
@@ -349,9 +277,14 @@ class OneThreeTwoAnimeExtractor(
         val body = runCatching {
             client.newCall(GET(hsUrl, headers("$embedBase/")))
                 .execute()
-                .also { Log.d(TAG, "resolveLegacyPlayer: HTTP ${it.code}") }
-                .takeIf { it.isSuccessful }
-                ?.body?.string()
+                .use { response ->
+                    Log.d(TAG, "resolveLegacyPlayer: HTTP ${response.code}")
+                    if (response.isSuccessful) {
+                        response.body.string()
+                    } else {
+                        null
+                    }
+                }
         }.getOrElse {
             Log.e(TAG, "resolveLegacyPlayer: request failed", it)
             null
@@ -359,7 +292,6 @@ class OneThreeTwoAnimeExtractor(
 
         Log.d(TAG, "resolveLegacyPlayer: body length=${body.length} snippet=${body.take(150)}")
 
-        // Primary: <div id="sources">{...}</div>
         val sourcesJson = DIV_SOURCES_REGEX.find(body)?.groupValues?.getOrNull(1)
         Log.d(TAG, "resolveLegacyPlayer: sourcesJson=$sourcesJson")
         if (!sourcesJson.isNullOrBlank()) {
@@ -375,7 +307,6 @@ class OneThreeTwoAnimeExtractor(
             }
         }
 
-        // Fallback: inline m3u8/mp4
         val fallback = extractM3u8(body) ?: extractMp4(body)
         Log.d(TAG, "resolveLegacyPlayer: inline fallback=$fallback")
         return fallback
@@ -393,9 +324,14 @@ class OneThreeTwoAnimeExtractor(
         val body = runCatching {
             client.newCall(GET(sbv2Url, headers("$embedBase/")))
                 .execute()
-                .also { Log.d(TAG, "resolveSubv2Player: HTTP ${it.code}") }
-                .takeIf { it.isSuccessful }
-                ?.body?.string()
+                .use { response ->
+                    Log.d(TAG, "resolveSubv2Player: HTTP ${response.code}")
+                    if (response.isSuccessful) {
+                        response.body.string()
+                    } else {
+                        null
+                    }
+                }
         }.getOrElse {
             Log.e(TAG, "resolveSubv2Player: request failed", it)
             null
@@ -408,7 +344,6 @@ class OneThreeTwoAnimeExtractor(
         if (!dataId.isNullOrBlank()) {
             val getSourcesUrl = "$embedBase/sbv2/getSources?id=$dataId"
             val result = callGetSources(getSourcesUrl, sbv2Url)
-            Log.d(TAG, "resolveSubv2Player: getSources result=$result")
             if (result != null) return result
         }
         return extractM3u8(body) ?: extractMp4(body)
@@ -420,13 +355,17 @@ class OneThreeTwoAnimeExtractor(
     // ------------------------------------------------------------------ //
 
     private fun callGetSources(url: String, referer: String): String? = runCatching {
-        val resp = client.newCall(GET(url, headers(referer))).execute()
-        val body = resp.body.string()
-        Log.d(TAG, "callGetSources: HTTP ${resp.code} body=${body.take(200)}")
-        if (resp.isSuccessful && body.isNotBlank()) {
-            json.decodeFromString<SourcesDto>(body).sources.trim().takeIf { it.isNotBlank() }
-        } else {
-            null
+        client.newCall(GET(url, headers(referer))).execute().use { resp ->
+            val body = resp.body.string()
+
+            if (resp.isSuccessful && body.isNotBlank()) {
+                json.decodeFromString<SourcesDto>(body)
+                    .sources
+                    .trim()
+                    .takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
         }
     }.getOrElse {
         Log.e(TAG, "callGetSources: failed for $url", it)
@@ -444,13 +383,7 @@ class OneThreeTwoAnimeExtractor(
     private fun hlsHeaders(embedReferer: String): Headers = Headers.Builder()
         .set("User-Agent", USER_AGENT)
         .set("Referer", embedReferer)
-        .set(
-            "Origin",
-            embedReferer.trimEnd('/').substringBeforeLast('/').let {
-                // Origin is the scheme+host without trailing slash
-                embedReferer.trimEnd('/')
-            },
-        )
+        .set("Origin", embedReferer.toHttpBaseOrNull() ?: "")
         .build()
 
     // ------------------------------------------------------------------ //

@@ -3,21 +3,6 @@ package eu.kanade.tachiyomi.animeextension.en.onetwothreeanime
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 
-// ============================================================
-// Filter architecture:
-//
-//  • CheckBoxGroup  → appends  ?param[]=val&param[]=val
-//  • RadioGroup     → appends  ?param=val            (single selection)
-//
-// The site uses array-notation for genre/country/season/year/type/language
-// and scalar notation for sort.
-//
-// FIX: status is sent as status[] (array notation) per the real site URLs.
-//      Sort now uses a blank-value sentinel at index 0 so "Default" emits
-//      nothing; searchAnimeRequest then falls back to appending sort=default
-//      itself – keeping the param always present (site requires it).
-// ============================================================
-
 object OneThreeTwoAnimeFilters {
 
     // ------------------------------------------------------------------ //
@@ -83,12 +68,6 @@ object OneThreeTwoAnimeFilters {
             FiltersData.TYPES.map { CheckBoxOption(it.first, it.second) },
         )
 
-    /**
-     * Status uses radio buttons on the site (single selection only).
-     *
-     * FIX: The real site sends status as status[] (array notation), not status.
-     * Confirmed from HAR: ?status%5B%5D=ongoing  (status[] = ongoing)
-     */
     class StatusFilter :
         RadioGroup(
             "Status",
@@ -104,15 +83,6 @@ object OneThreeTwoAnimeFilters {
             FiltersData.LANGUAGES.map { CheckBoxOption(it.first, it.second) },
         )
 
-    /**
-     * Sort filter.
-     *
-     * FIX: The first option now has a blank queryValue so selectedPair()
-     * returns null for "Default".  searchAnimeRequest then always appends
-     * sort=default as a fallback, which keeps the param present in the URL
-     * (the site needs it to recognise this as a filter request) while letting
-     * the user's explicit choice override it when they pick A-Z / Z-A.
-     */
     class SortFilter :
         RadioGroup(
             "Sort",
@@ -164,8 +134,6 @@ object OneThreeTwoAnimeFilters {
     // ------------------------------------------------------------------ //
 
     private object FiltersData {
-
-        // Pairs are (displayName, queryValue)
         val GENRES = arrayOf(
             Pair("Action", "action"),
             Pair("Adventure", "adventure"),
@@ -224,7 +192,6 @@ object OneThreeTwoAnimeFilters {
             Pair("Winter", "winter"),
         )
 
-        // Generate years 2026 → 1958 as strings (added 2024–2026 which were missing)
         val YEARS: Array<String> = (2026 downTo 1958).map { it.toString() }.toTypedArray()
 
         val TYPES = arrayOf(
@@ -234,9 +201,6 @@ object OneThreeTwoAnimeFilters {
             Pair("ONA", "ona"),
             Pair("Special", "special"),
         )
-
-        // FIX: First entry has blank value → acts as "All" sentinel.
-        // Status is emitted as status[] (array notation) per real site URLs.
         val STATUSES = arrayOf(
             Pair("All", ""),
             Pair("Airing", "ongoing"),
@@ -249,11 +213,8 @@ object OneThreeTwoAnimeFilters {
             Pair("Dubbed", "d"),
         )
 
-        // FIX: First entry now has blank value so "Default" → selectedPair()
-        // returns null → searchAnimeRequest appends sort=default as fallback.
-        // This makes "Default" truly optional while user-chosen sorts still work.
         val SORT_OPTIONS = arrayOf(
-            Pair("Default", ""), // blank → no explicit sort param from here
+            Pair("Default", ""),
             Pair("Name A-Z", "title_asc"),
             Pair("Name Z-A", "title_dsc"),
         )

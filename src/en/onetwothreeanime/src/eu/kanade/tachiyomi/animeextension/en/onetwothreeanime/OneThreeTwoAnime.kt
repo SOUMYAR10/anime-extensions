@@ -23,36 +23,6 @@ import okhttp3.Response
 import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 
-// =============================================================================
-//  123Anime  –  Aniyomi extension
-//
-//  Site:     https://123anime.ru  (+ mirrors)
-//  Pattern:  Standard server-side rendered HTML with AJAX episode/video API
-//  Auth:     Cloudflare + Google reCAPTCHA v2 (handled by cloudflareClient)
-//
-//  URL conventions (confirmed from HAR):
-//    Browse   GET /home  (no pagination – site uses infinite scroll on home)
-//    Filter   GET /filter?genre[]=action&type[]=movies&sort=title_asc?page=N
-//    Details  GET /anime/{slug}
-//    Episodes GET /ajax/film/sv?id={slug}           → JSON { html: "…" }
-//    Video    GET /ajax/episode/info?epr={slug}/{ep}/{serverId}
-//                                                   → JSON { target: "…", grabber: "…" }
-//
-//  Card DOM (filter / search / home pages):
-//    div.item
-//      a.poster[href="/anime/slug"]   ← filter/home-recent
-//      a.thumb[href="/anime/slug"]    ← home ranking widget
-//        img[data-src="/imgs/poster/slug.jpg"][alt="Title"]
-//      a.name[href]  → title text
-//
-//  Pagination DOM (filter page):
-//    <div class="paging-wrapper">
-//      <a href="...?page=N-1" class="... prev">< Previous</a>
-//      <a href="...?page=N+1" class="... next ">Next ></a>
-//      <form>page <input> of <span class="total">522</span></form>
-//    </div>
-// =============================================================================
-
 class OneThreeTwoAnime :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
@@ -72,9 +42,6 @@ class OneThreeTwoAnime :
         .followSslRedirects(true)
         .build()
 
-    // headersBuilder() is called ONCE by the base class to create the shared
-    // `headers` val. Every actual request uses freshHeaders() which re-evaluates
-    // baseUrl at call time so the Referer always matches the active mirror.
     override fun headersBuilder() = super.headersBuilder()
         .set("User-Agent", OneThreeTwoAnimeExtractor.USER_AGENT)
         .set("Referer", "$baseUrl/")
@@ -85,7 +52,6 @@ class OneThreeTwoAnime :
 
     private val json: Json by injectLazy()
 
-    // extractor recreated per call so it always gets the current baseUrl + preference
     private val extractor: OneThreeTwoAnimeExtractor
         get() = OneThreeTwoAnimeExtractor(
             client,
@@ -171,12 +137,6 @@ class OneThreeTwoAnime :
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val params = OneThreeTwoAnimeFilters.getSearchParameters(filters)
 
-        // The site uses a non-standard pagination scheme: page numbers are appended
-        // as "?page=N" directly on the path rather than as a proper "?page=N" query
-        // param. E.g.: https://123anime.ru/filter?page=2?genre[]=action&sort=default
-        //
-        // Strategy: build the filter query string normally, then prepend "?page=N"
-        // to the path when page > 1.
         val filterBase = if (page > 1) "$baseUrl/filter?page=$page" else "$baseUrl/filter"
 
         val url = filterBase.toHttpUrl().newBuilder().apply {
@@ -211,6 +171,7 @@ class OneThreeTwoAnime :
     //  Anime details  –  GET /anime/{slug}
     // ==================================================================
 
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, freshHeaders())
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asJsoup()
         return SAnime.create().apply {
@@ -343,9 +304,8 @@ class OneThreeTwoAnime :
 
         return SAnime.create().apply {
             setUrlWithoutDomain(href)
-            thumbnail_url = img?.attr("data-src")?.let {
-                if (it.startsWith("http")) it else "$baseUrl$it"
-            } ?: img?.attr("abs:src")
+            thumbnail_url = img?.attr("abs:data-src")?.takeIf { it.isNotBlank() }
+                ?: img?.attr("abs:src")
             this.title = title
         }
     }
