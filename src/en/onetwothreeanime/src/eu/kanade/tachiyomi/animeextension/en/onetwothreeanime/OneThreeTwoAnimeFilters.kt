@@ -12,20 +12,13 @@ object OneThreeTwoAnimeFilters {
     /** A single named checkbox value. */
     class CheckBoxOption(val displayName: String, val queryValue: String, state: Boolean = false) : AnimeFilter.CheckBox(displayName, state)
 
-    /** A named group of checkboxes – each checked item emits `?param[]=value`. */
     open class CheckBoxGroup(name: String, val queryParam: String, items: List<CheckBoxOption>) : AnimeFilter.Group<CheckBoxOption>(name, items) {
 
-        /** Returns a list of (param, value) pairs for every checked item. */
         fun checkedPairs(): List<Pair<String, String>> = state.filter { it.state }.map { queryParam to it.queryValue }
     }
 
-    /**
-     * A named group of radio buttons – only one item may be active.
-     * The first entry MUST have a blank queryValue to act as "All / unset".
-     */
     open class RadioGroup(name: String, val queryParam: String, val options: Array<Pair<String, String>>) : AnimeFilter.Select<String>(name, options.map { it.first }.toTypedArray()) {
 
-        /** Returns null when the selected value is blank (i.e. "All"). */
         fun selectedPair(): Pair<String, String>? = options[state].second.takeIf { it.isNotBlank() }?.let { queryParam to it }
     }
 
@@ -75,7 +68,6 @@ object OneThreeTwoAnimeFilters {
             FiltersData.STATUSES,
         )
 
-    /** Language filter – sub/dubbed, uses array notation. */
     class LanguageFilter :
         CheckBoxGroup(
             "Language",
@@ -111,7 +103,6 @@ object OneThreeTwoAnimeFilters {
     // ------------------------------------------------------------------ //
 
     data class FilterParams(
-        /** All (param, value) pairs ready to be appended to the URL builder. */
         val queryPairs: List<Pair<String, String>>,
     )
 
