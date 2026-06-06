@@ -12,8 +12,8 @@ internal val DOMAIN_ENTRIES = arrayOf("av1encodes.com (default)", "av1please.com
 internal val DOMAIN_VALUES = arrayOf("https://av1encodes.com", "https://av1please.com")
 
 internal const val PREF_QUALITY_KEY = "preferred_quality"
-internal val QUALITY_ENTRIES = arrayOf("1920 x 1080", "1280 x 720", "854 x 480", "640 x 360")
-internal val QUALITY_VALUES = arrayOf("1080p", "720p", "480p", "360p")
+internal val QUALITY_ENTRIES = arrayOf("1080p", "720p", "480p", "360p")
+internal val QUALITY_VALUES = arrayOf("1920 x 1080", "1280 x 720", "854 x 480", "640 x 360")
 internal val PREF_QUALITY_DEFAULT = QUALITY_VALUES.first()
 
 internal const val PREF_LINK_TYPE_KEY = "preferred_link_type"
@@ -63,12 +63,16 @@ internal fun buildPreferenceScreen(screen: PreferenceScreen) {
     }.also(screen::addPreference)
 }
 
+private val qualityRegex by lazy { Regex("""[xX]\s*(\d{3,4})""") }
+private val resolutionRegex by lazy { Regex("""(\d{3,4})p""") }
+
 internal fun List<Video>.sortByPreferredQuality(preferences: SharedPreferences): List<Video> {
-    val q = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+    val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
+    val preferredResolution = qualityRegex.find(preferredQuality)?.groupValues?.getOrNull(1) ?: preferredQuality
     val linkType = preferences.getString(PREF_LINK_TYPE_KEY, PREF_LINK_TYPE_DEFAULT)!!
     return sortedWith(
         compareByDescending<Video> { it.quality.contains(linkType, ignoreCase = true) }
-            .thenByDescending { it.quality.contains(q, ignoreCase = true) }
-            .thenByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 },
+            .thenByDescending { it.quality.contains(preferredResolution, ignoreCase = true) }
+            .thenByDescending { resolutionRegex.find(it.quality)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0 },
     )
 }
