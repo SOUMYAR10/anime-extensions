@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.network.GET
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 
 class OneThreeTwoAnimeExtractor(
@@ -389,10 +390,9 @@ class OneThreeTwoAnimeExtractor(
     //  URL helpers                                                        //
     // ------------------------------------------------------------------ //
 
-    private fun String.toHttpBaseOrNull(): String? = runCatching {
-        val u = java.net.URL(this)
-        "${u.protocol}://${u.host}"
-    }.getOrNull()
+    private fun String.toHttpBaseOrNull(): String? = toHttpUrlOrNull()?.let {
+        "${it.scheme}://${it.host}"
+    }
 
     // ------------------------------------------------------------------ //
     //  Stream extraction helpers                                          //
