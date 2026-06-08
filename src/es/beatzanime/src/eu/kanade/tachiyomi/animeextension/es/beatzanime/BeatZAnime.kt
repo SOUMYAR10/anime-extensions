@@ -71,6 +71,7 @@ class BeatZAnime : ParsedAnimeHttpSource() {
     override fun latestUpdatesNextPageSelector(): String = "ul.pagination > li.active + li:not(.disabled)"
 
     // =============================== Search ===============================
+
     // The /lista-animes/ page returns all cards in one response. Filtering is
     // applied entirely client-side by JS via data-* attributes on each card.
     // The server ignores any query parameters. We mirror the same logic here.
@@ -78,6 +79,17 @@ class BeatZAnime : ParsedAnimeHttpSource() {
     // To avoid relying on mutable instance fields (which would break under
     // concurrent source calls), the filter state is encoded into the Request
     // tag as a SearchParams data class and recovered inside searchAnimeParse().
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        val params = SearchParams(
+            query = query,
+            fuente = filters.filterIsInstance<SourceFilter>().firstOrNull()?.getValue() ?: "",
+            estado = filters.filterIsInstance<StatusFilter>().firstOrNull()?.getValue() ?: "",
+            tipo = filters.filterIsInstance<TypeFilter>().firstOrNull()?.getValue() ?: "",
+        )
+        return GET("$baseUrl/lista-animes/", headers).newBuilder()
+            .tag(SearchParams::class.java, params)
+            .build()
+    }
 
     override fun searchAnimeSelector(): String = "div.anime-card"
 
@@ -129,23 +141,6 @@ class BeatZAnime : ParsedAnimeHttpSource() {
         }
         return AnimesPage(animes, hasNextPage = false)
     }
-
-    override fun searchAnimeRequest(
-        page: Int,
-        query: String,
-        filters: AnimeFilterList,
-    ): Request {
-        val params = SearchParams(
-            query = query,
-            fuente = filters.filterIsInstance<SourceFilter>().firstOrNull()?.getValue() ?: "",
-            estado = filters.filterIsInstance<StatusFilter>().firstOrNull()?.getValue() ?: "",
-            tipo = filters.filterIsInstance<TypeFilter>().firstOrNull()?.getValue() ?: "",
-        )
-        return GET("$baseUrl/lista-animes/", headers).newBuilder()
-            .tag(SearchParams::class.java, params)
-            .build()
-    }
-
     override fun searchAnimeNextPageSelector(): String? = null
 
     // ============================== Filters ===============================
@@ -164,13 +159,13 @@ class BeatZAnime : ParsedAnimeHttpSource() {
         genre = document.selectFirst("p.post-text span:has(b:contains(Generos))")?.ownText()
         status = document.selectFirst("div:has(>h5:contains(Estado)) a").parseStatus()
         description = buildString {
-            document.selectFirst("p.post-text")?.textNodes()?.let {
-                append(it.joinToString("\n\n") { node -> node.text() })
+            document.selectFirst("p.post-text")?.textNodes()?.let { node ->
+                append(node.joinToString("\n\n") { it.text() })
             }
             append("\n\n")
-            document.selectFirst("p.post-text span:has(b:contains(Sinónimos))")?.let {
+            document.selectFirst("p.post-text span:has(b:contains(Sinónimos))")?.let { span: Element ->
                 append("Sinónimos: ")
-                append(it.ownText())
+                append(span.ownText())
             }
         }.trim()
     }
