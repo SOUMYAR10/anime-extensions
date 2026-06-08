@@ -15,13 +15,11 @@ import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.injectLazy
 
 class OneThreeTwoAnime :
     AnimeHttpSource(),
@@ -169,6 +167,7 @@ class OneThreeTwoAnime :
     // ==================================================================
 
     override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, freshHeaders())
+
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.useAsJsoup()
         return SAnime.create().apply {
@@ -349,7 +348,7 @@ class OneThreeTwoAnime :
         private const val SUB_DUB_DUB = "dub"
         private val SUB_DUB_ENTRIES = arrayOf("Sub + Dub (Show Both)", "Sub Only", "Dub Only")
         private val SUB_DUB_VALUES = arrayOf(SUB_DUB_BOTH, SUB_DUB_SUB, SUB_DUB_DUB)
-        private val PREF_SUB_DUB_DEFAULT = SUB_DUB_BOTH
+        private const val PREF_SUB_DUB_DEFAULT = SUB_DUB_BOTH
 
         // Latest tab preference (only active when Sub+Dub mode is selected)
         private const val PREF_LATEST_TAB_KEY = "pref_latest_tab"
