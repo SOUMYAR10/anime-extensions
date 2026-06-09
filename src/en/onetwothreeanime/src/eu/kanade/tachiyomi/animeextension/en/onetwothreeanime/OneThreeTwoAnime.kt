@@ -35,13 +35,7 @@ class OneThreeTwoAnime :
 
     override val supportsLatest = true
 
-    override val client: OkHttpClient = network.cloudflareClient.newBuilder()
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
-
     override fun headersBuilder() = super.headersBuilder()
-        .set("User-Agent", OneThreeTwoAnimeExtractor.USER_AGENT)
         .set("Referer", "$baseUrl/")
 
     private fun freshHeaders() = headersBuilder().build()
@@ -51,6 +45,7 @@ class OneThreeTwoAnime :
     private val extractor: OneThreeTwoAnimeExtractor
         get() = OneThreeTwoAnimeExtractor(
             client,
+            headers,
             baseUrl,
             preferences.getString(PREF_PLAYER_KEY, PREF_PLAYER_DEFAULT)!!,
         )

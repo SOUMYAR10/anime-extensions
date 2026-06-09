@@ -14,6 +14,7 @@ import org.jsoup.Jsoup
 
 class OneThreeTwoAnimeExtractor(
     private val client: OkHttpClient,
+    private val headers: Headers,
     private val baseUrl: String,
     private val preferredPlayer: String = PLAYER_JW,
 ) {
@@ -42,8 +43,7 @@ class OneThreeTwoAnimeExtractor(
     //  Shared headers                                                     //
     // ------------------------------------------------------------------ //
 
-    private fun headers(referer: String = "$baseUrl/") = Headers.Builder()
-        .set("User-Agent", USER_AGENT)
+    private fun headers(referer: String = "$baseUrl/") = headers.newBuilder()
         .set("Referer", referer)
         .build()
 
