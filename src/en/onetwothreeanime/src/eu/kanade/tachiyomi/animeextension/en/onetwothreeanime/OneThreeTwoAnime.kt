@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.en.onetwothreeanime
 
-import android.util.Log
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -16,7 +15,6 @@ import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
@@ -164,13 +162,11 @@ class OneThreeTwoAnime :
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.useAsJsoup()
         return SAnime.create().apply {
-            title = doc.selectFirst("h2.title")?.text()
-                ?: doc.selectFirst("h1.title")?.ownText()?.trim()
-                ?: ""
+            doc.selectFirst("h2.title, h1.title")?.text()?.let { title = it }
             thumbnail_url = doc.selectFirst(".widget.info .thumb img")?.attr("abs:src")
                 ?: doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")
             val meta = doc.selectFirst("dl.meta")
-            genre = meta?.parseMeta("Genre:")?.joinToString { it.text() }
+            genre = meta?.parseMeta("Genre:")?.joinToString { it.text() }?.takeIf { it.isNotBlank() }
             status = meta?.parseMeta("Status:")
                 ?.firstOrNull()?.text()
                 .toAnimeStatus()
@@ -199,8 +195,8 @@ class OneThreeTwoAnime :
 
         return svDoc.select("ul.episodes.range li a[data-id]").map { ep ->
             SEpisode.create().apply {
-                val numText = ep.text().trim()
-                url = ep.attr("data-id") // "mao/1"
+                val numText = ep.text()
+                setUrlWithoutDomain(ep.attr("data-id")) // "mao/1"
                 name = "Episode $numText"
                 episode_number = numText.toFloatOrNull() ?: 0f
             }
@@ -217,13 +213,12 @@ class OneThreeTwoAnime :
 
     override fun videoListParse(response: Response): List<Video> {
         // epr param = "animeSlug/epNum/0" — drop trailing "/0" (the dummy serverId)
-        val epr = response.request.url.queryParameter("epr") ?: return emptyList()
+        val epr = response.use { it.request.url.queryParameter("epr") } ?: return emptyList()
         val withoutServerId = epr.substringBeforeLast("/")
         val lastSlash = withoutServerId.lastIndexOf('/')
         if (lastSlash < 0) return emptyList()
         val animeSlug = withoutServerId.substring(0, lastSlash)
         val epNum = withoutServerId.substring(lastSlash + 1)
-        Log.d("123Anime", "videoListParse: slug=$animeSlug ep=$epNum")
         return extractor.fetchVideos(animeSlug, epNum)
     }
 
@@ -287,7 +282,7 @@ class OneThreeTwoAnime :
         val linkEl = element.selectFirst("a.poster[href], a.thumb[href]") ?: return null
         val href = linkEl.attr("href").takeIf { it.isNotBlank() } ?: return null
         val img = linkEl.selectFirst("img[data-src]") ?: linkEl.selectFirst("img")
-        val title = element.selectFirst("a.name")?.text()?.trim()
+        val title = element.selectFirst("a.name")?.text()
             ?: img?.attr("alt")?.trim()
             ?: return null
 
@@ -300,7 +295,7 @@ class OneThreeTwoAnime :
     }
 
     private fun Element.parseMeta(label: String): List<Element> {
-        val targetDt = select("dt").firstOrNull { it.text().trim() == label }
+        val targetDt = select("dt").firstOrNull { it.text() == label }
             ?: return emptyList()
         val dd = targetDt.nextElementSibling() ?: return emptyList()
         return dd.select("a").takeIf { it.isNotEmpty() } ?: listOf(dd)
