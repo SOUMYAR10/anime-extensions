@@ -63,17 +63,12 @@ class MasterExtractor(private val client: OkHttpClient) {
      * reads the playlist body itself via OkHttp — compression is fine for that path.
      */
     private fun buildMasterHeaders(refererUrl: String): Headers = Headers.Builder()
-        .add("User-Agent", DESKTOP_UA)
         .add("Referer", refererUrl)
         .add("Origin", SITE_ORIGIN)
         .add("Accept-Language", "en-US,en;q=0.9")
         .build()
 
     companion object {
-        private const val DESKTOP_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/124.0.0.0 Safari/537.36"
         private const val SITE_ORIGIN = "https://hentaihaven.xxx"
     }
 }

@@ -244,7 +244,6 @@ class OctopusExtractor(private val client: OkHttpClient) {
      * Standard browser-mimicry headers + WordPress AJAX marker.
      */
     private fun buildApiHeaders(episodeUrl: String): Headers = Headers.Builder()
-        .add("User-Agent", DESKTOP_UA)
         .add("Referer", episodeUrl)
         .add("Origin", SITE_ORIGIN)
         .add("Accept-Language", "en-US,en;q=0.9")
@@ -267,7 +266,6 @@ class OctopusExtractor(private val client: OkHttpClient) {
      */
     private fun buildOctopusCdnHeaders(episodeUrl: String, auth: JsonObject?): Headers {
         val builder = Headers.Builder()
-            .add("User-Agent", DESKTOP_UA)
             .add("Referer", episodeUrl)
             .add("Origin", SITE_ORIGIN)
             .add("Accept-Language", "en-US,en;q=0.9")
@@ -306,10 +304,6 @@ class OctopusExtractor(private val client: OkHttpClient) {
 
     companion object {
         private const val TAG = "OctopusExtractor"
-        private const val DESKTOP_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/124.0.0.0 Safari/537.36"
         private const val SITE_ORIGIN = "https://hentaihaven.xxx"
     }
 }

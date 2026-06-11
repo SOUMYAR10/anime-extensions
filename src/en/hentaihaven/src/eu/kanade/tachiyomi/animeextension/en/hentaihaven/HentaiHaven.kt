@@ -33,7 +33,6 @@ class HentaiHaven :
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
-                .header("User-Agent", DESKTOP_UA)
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
             chain.proceed(request)
@@ -44,10 +43,6 @@ class HentaiHaven :
     private val preferences by getPreferencesLazy()
 
     companion object {
-        private const val DESKTOP_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/124.0.0.0 Safari/537.36"
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
         private val QUALITY_OPTIONS = arrayOf("1080p", "720p", "360p")
