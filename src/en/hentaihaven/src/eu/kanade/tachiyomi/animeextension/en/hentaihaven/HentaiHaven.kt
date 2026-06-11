@@ -13,8 +13,8 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -123,7 +123,7 @@ class HentaiHaven :
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val items = document.select(searchAnimeSelector())
             .map { searchAnimeFromElement(it) }
             .distinctBy { it.url }
@@ -179,7 +179,7 @@ class HentaiHaven :
     // ── Episodes ──────────────────────────────────────────────────────────────
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
-        val document = client.newCall(animeDetailsRequest(anime)).awaitSuccess().asJsoup()
+        val document = client.newCall(animeDetailsRequest(anime)).awaitSuccess().useAsJsoup()
         return parseEpisodesFromHtml(document)
     }
 
@@ -217,7 +217,7 @@ class HentaiHaven :
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val episodeUrl = "$baseUrl${episode.url}"
-        val document = client.newCall(GET(episodeUrl, headers)).awaitSuccess().asJsoup()
+        val document = client.newCall(GET(episodeUrl, headers)).awaitSuccess().useAsJsoup()
 
         // Locate the player.php iframe or script — it carries `?data=<base64>`.
         val playerPhpSrc = document
