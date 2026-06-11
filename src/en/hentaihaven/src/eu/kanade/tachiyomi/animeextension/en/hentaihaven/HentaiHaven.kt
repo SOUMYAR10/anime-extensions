@@ -188,22 +188,23 @@ class HentaiHaven :
             .mapIndexedNotNull { index, el ->
                 val link = el.selectFirst("a") ?: return@mapIndexedNotNull null
                 SEpisode.create().apply {
-                    setUrlWithoutDomain(link.attr("href"))
-                    name = link.text().trim().ifBlank { "Episode ${index + 1}" }
-                    episode_number = Regex("""[Ee]pisode[- ](\d+(?:\.\d+)?)""")
-                        .find(name)?.groupValues?.get(1)?.toFloatOrNull()
-                        ?: (index + 1).toFloat()
-                    val dateStr = el.selectFirst("span.chapter-release-date i")?.text()
-                    if (!dateStr.isNullOrBlank()) date_upload = parseDateString(dateStr)
-                }
+    private fun parseEpisodesFromHtml(doc: Document): List<SEpisode> {
+        val elements = doc.select("li.wp-manga-chapter, ul.main.version-chap li")
+        val size = elements.size
+        return elements.mapIndexedNotNull { index, el ->
+            val link = el.selectFirst("a") ?: return@mapIndexedNotNull null
+            SEpisode.create().apply {
+                setUrlWithoutDomain(link.attr("href"))
+                name = link.text().trim().ifBlank { "Episode ${size - index}" }
+                episode_number = Regex("""[Ee]pisode[- ](\d+(?:\.\d+)?)""")
+                    .find(name)?.groupValues?.get(1)?.toFloatOrNull()
+                    ?: (size - index).toFloat()
+                val dateStr = el.selectFirst("span.chapter-release-date i")?.text()
+                if (!dateStr.isNullOrBlank()) date_upload = parseDateString(dateStr)
             }
-            .sortedByDescending { it.episode_number }
+        }
+        .sortedByDescending { it.episode_number }
     }
-
-    private fun parseDateString(raw: String): Long = runCatching {
-        listOf(
-            java.text.SimpleDateFormat("MMMM d, yyyy", java.util.Locale.ENGLISH),
-            java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.ENGLISH),
             java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.ENGLISH),
         ).firstNotNullOfOrNull { fmt ->
             runCatching { fmt.parse(raw.trim())?.time }.getOrNull()
