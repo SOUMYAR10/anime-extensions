@@ -85,11 +85,6 @@ class HentaiHaven :
     // ── Search ────────────────────────────────────────────────────────────────
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val genreFilter = filters.filterIsInstance<GenreFilter>().firstOrNull()
-        val tagFilter = filters.filterIsInstance<TagFilter>().firstOrNull()
-        val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()
-
-        val browseUrl = genreFilter?.browseUrl(baseUrl) ?: tagFilter?.browseUrl(baseUrl)
         if (query.isNotBlank()) {
             val url = baseUrl.toHttpUrl().newBuilder()
                 .addQueryParameter("s", query)
@@ -108,6 +103,8 @@ class HentaiHaven :
             if (page > 1) urlBuilder.addPathSegments("page/$page/")
             return GET(urlBuilder.build().toString(), headers)
         }
+
+        return GET("$baseUrl/page/$page/", headers)
     }
 
     override fun searchAnimeSelector() = "div.c-tabs-item, div.page-item-detail.video"
@@ -118,7 +115,7 @@ class HentaiHaven :
         setUrlWithoutDomain(linkEl?.attr("href") ?: "")
         title = linkEl?.attr("title")?.takeIf { it.isNotBlank() }
             ?: element.selectFirst("div.post-title a, h3 a, h4 a")?.text()
-            ?: ""
+                ?: ""
         thumbnail_url = element.selectFirst("img")?.attr("abs:src")
     }
 
@@ -184,11 +181,6 @@ class HentaiHaven :
     }
 
     private fun parseEpisodesFromHtml(doc: Document): List<SEpisode> {
-        return doc.select("li.wp-manga-chapter, ul.main.version-chap li")
-            .mapIndexedNotNull { index, el ->
-                val link = el.selectFirst("a") ?: return@mapIndexedNotNull null
-                SEpisode.create().apply {
-    private fun parseEpisodesFromHtml(doc: Document): List<SEpisode> {
         val elements = doc.select("li.wp-manga-chapter, ul.main.version-chap li")
         val size = elements.size
         return elements.mapIndexedNotNull { index, el ->
@@ -202,9 +194,13 @@ class HentaiHaven :
                 val dateStr = el.selectFirst("span.chapter-release-date i")?.text()
                 if (!dateStr.isNullOrBlank()) date_upload = parseDateString(dateStr)
             }
-        }
-        .sortedByDescending { it.episode_number }
+        }.sortedByDescending { it.episode_number }
     }
+
+    private fun parseDateString(raw: String): Long = runCatching {
+        listOf(
+            java.text.SimpleDateFormat("MMMM d, yyyy", java.util.Locale.ENGLISH),
+            java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.ENGLISH),
             java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.ENGLISH),
         ).firstNotNullOfOrNull { fmt ->
             runCatching { fmt.parse(raw.trim())?.time }.getOrNull()
@@ -243,18 +239,17 @@ class HentaiHaven :
 
         if (playerDataB64.isBlank()) return emptyList()
 
-        // Resolve api.php URL from the inline player_logic JS block, with fallback.
         val playerLogicScript =
             document.selectFirst("script:containsData(player_logic)")?.data() ?: ""
-        val apiUrl = Regex(""""api_url"\s*:\s*"([^"]+)"""")
-            .find(playerLogicScript)?.groupValues?.get(1)
-            ?: "$baseUrl/wp-content/plugins/player-logic/api.php"
 
-        val videos = extractor.getVideosFromPayload(apiUrl, playerDataB64, episodeUrl)
         val apiUrl = Regex(""""api_url"\s*:\s*"([^"]+)"""")
             .find(playerLogicScript)?.groupValues?.get(1)
             ?.replace("\\/", "/")
             ?: "$baseUrl/wp-content/plugins/player-logic/api.php"
+
+        val videos = extractor.getVideosFromPayload(apiUrl, playerDataB64, episodeUrl)
+
+        val preferred = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
         return videos.sortedWith(compareByDescending { it.quality == preferred })
     }
 
