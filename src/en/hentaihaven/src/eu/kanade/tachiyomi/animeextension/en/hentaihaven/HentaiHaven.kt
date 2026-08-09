@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.hentaihaven
 
+import android.util.Log
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animeextension.en.hentaihaven.extractors.OctopusExtractor
@@ -10,7 +11,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.getPreferencesLazy
@@ -18,11 +19,11 @@ import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 
 class HentaiHaven :
-    ParsedAnimeHttpSource(),
+    AnimeHttpSource(),
     ConfigurableAnimeSource {
 
     override val name = "HentaiHaven"
@@ -65,22 +66,30 @@ class HentaiHaven :
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/page/$page/?m_orderby=views", headers)
 
-    override fun popularAnimeSelector() = "div.page-item-detail.video"
-    override fun popularAnimeNextPageSelector() = "a.nextpostslink, div.wp-pagenavi a.next"
-
-    override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.selectFirst("div.item-thumb a")?.attr("href") ?: "")
-        title = element.selectFirst("div.post-title a, h3.h5 a")?.text() ?: ""
-        thumbnail_url = element.selectFirst("img")?.attr("abs:src")
+    override fun popularAnimeParse(response: Response): AnimesPage = response.use { res ->
+        val rawBody = res.body.string()
+        if (rawBody.length < 100 || !rawBody.trimStart().let { it.startsWith("<!") || it.startsWith("<html") }) {
+            Log.e("HentaiHaven", "Unexpected server response (${rawBody.length} chars): ${rawBody.take(200)}")
+            throw Exception("Unexpected response from server — site may have changed or blocked the request. Check logcat for details.")
+        }
+        val document = Jsoup.parse(rawBody, res.request.url.toString())
+        val items = document.select("div.page-item-detail.video").map { element ->
+            SAnime.create().apply {
+                setUrlWithoutDomain(element.selectFirst("div.item-thumb a")?.attr("href") ?: "")
+                title = element.selectFirst("div.post-title a, h3.h5 a")?.text() ?: ""
+                thumbnail_url = element.selectFirst("img[data-src]")?.attr("abs:data-src")
+                    ?: element.selectFirst("img")?.attr("abs:src")
+            }
+        }
+        val hasNextPage = document.selectFirst("a.nextpostslink, div.wp-pagenavi a.next") != null
+        AnimesPage(items, hasNextPage)
     }
 
     // ── Latest ────────────────────────────────────────────────────────────────
 
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/page/$page/?m_orderby=latest", headers)
 
-    override fun latestUpdatesSelector() = popularAnimeSelector()
-    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
-    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // ── Search ────────────────────────────────────────────────────────────────
 
@@ -98,39 +107,38 @@ class HentaiHaven :
         val sortFilter = filters.filterIsInstance<SortFilter>().firstOrNull()
 
         val browseUrl = genreFilter?.browseUrl(baseUrl) ?: tagFilter?.browseUrl(baseUrl)
-        val urlBuilder = (browseUrl ?: "$baseUrl/").toHttpUrl().newBuilder()
-
-        if (page > 1) {
-            urlBuilder.addPathSegments("page/$page/")
+        if (browseUrl != null) {
+            val urlBuilder = browseUrl.toHttpUrl().newBuilder()
+            if (page > 1) urlBuilder.addPathSegments("page/$page/")
+            return GET(urlBuilder.build().toString(), headers)
         }
 
-        sortFilter?.let {
-            urlBuilder.addQueryParameter("m_orderby", it.urlValue)
+        return GET("$baseUrl/page/$page/", headers)
+    }
+
+    override fun searchAnimeParse(response: Response): AnimesPage = response.use { res ->
+        val rawBody = res.body.string()
+        if (rawBody.length < 100 || !rawBody.trimStart().let { it.startsWith("<!") || it.startsWith("<html") }) {
+            Log.e("HentaiHaven", "Unexpected server response (${rawBody.length} chars): ${rawBody.take(200)}")
+            throw Exception("Unexpected response from server — site may have changed or blocked the request. Check logcat for details.")
         }
-
-        return GET(urlBuilder.build().toString(), headers)
-    }
-
-    override fun searchAnimeSelector() = "div.c-tabs-item, div.page-item-detail.video"
-    override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
-
-    override fun searchAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val linkEl = element.selectFirst("a[href*='/watch/']")
-        setUrlWithoutDomain(linkEl?.attr("href") ?: "")
-        title = linkEl?.attr("title")?.takeIf { it.isNotBlank() }
-            ?: element.selectFirst("div.post-title a, h3 a, h4 a")?.text()
-            ?: ""
-        thumbnail_url = element.selectFirst("img")?.attr("abs:src")
-    }
-
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val items = document.select(searchAnimeSelector())
-            .map { searchAnimeFromElement(it) }
+        val document = Jsoup.parse(rawBody, res.request.url.toString())
+        val items = document.select("div.c-tabs-item, div.page-item-detail.video")
+            .map { element ->
+                SAnime.create().apply {
+                    val linkEl = element.selectFirst("a[href*='/watch/']")
+                    setUrlWithoutDomain(linkEl?.attr("href") ?: "")
+                    title = linkEl?.attr("title")?.takeIf { it.isNotBlank() }
+                        ?: element.selectFirst("div.post-title a, h3 a, h4 a")?.text()
+                        ?: ""
+                    thumbnail_url = element.selectFirst("img[data-src]")?.attr("abs:data-src")
+                        ?: element.selectFirst("img")?.attr("abs:src")
+                }
+            }
             .distinctBy { it.url }
             .filter { it.url.isNotBlank() && it.title.isNotBlank() }
-        val hasNextPage = document.selectFirst(searchAnimeNextPageSelector()) != null
-        return AnimesPage(items, hasNextPage)
+        val hasNextPage = document.selectFirst("a.nextpostslink, div.wp-pagenavi a.next") != null
+        AnimesPage(items, hasNextPage)
     }
 
     override fun getFilterList() = AnimeFilterList(
@@ -143,30 +151,37 @@ class HentaiHaven :
 
     // ── Details ───────────────────────────────────────────────────────────────
 
-    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("div.post-title h1")?.text()
-            ?: document.selectFirst("h1.entry-title")?.text() ?: ""
-        thumbnail_url = document.selectFirst(
-            "div.summary_image img, div.summary-image img",
-        )?.attr("abs:src")
-        description = document.selectFirst(
-            "div.description-summary div.summary__content, div.entry-content p",
-        )?.text()
-        author = document.selectFirst(
-            "div.post-content_item.mg_author div.summary-content a, " +
-                "div.post-content_item:contains(Studio) div.summary-content a",
-        )?.text()
-        genre = document.select(
-            "div.genres-content a, div.post-content_item.mg_genres a",
-        ).joinToString { it.text() }.takeIf { it.isNotBlank() }
-        status = when (
-            document.selectFirst(
-                "div.post-content_item:contains(Status) div.summary-content",
-            )?.text()?.lowercase()
-        ) {
-            "ongoing" -> SAnime.ONGOING
-            "completed" -> SAnime.COMPLETED
-            else -> SAnime.UNKNOWN
+    override fun animeDetailsParse(response: Response): SAnime = response.use { res ->
+        val rawBody = res.body.string()
+        if (rawBody.length < 100 || !rawBody.trimStart().let { it.startsWith("<!") || it.startsWith("<html") }) {
+            Log.e("HentaiHaven", "Unexpected server response (${rawBody.length} chars): ${rawBody.take(200)}")
+            throw Exception("Unexpected response from server — site may have changed or blocked the request. Check logcat for details.")
+        }
+        val document = Jsoup.parse(rawBody, res.request.url.toString())
+        SAnime.create().apply {
+            title = document.selectFirst("div.post-title h1")?.text()
+                ?: document.selectFirst("h1.entry-title")?.text() ?: ""
+            thumbnail_url = document.selectFirst("div.summary_image img[data-src], div.summary-image img[data-src]")?.attr("abs:data-src")
+                ?: document.selectFirst("div.summary_image img, div.summary-image img")?.attr("abs:src")
+            description = document.selectFirst(
+                "div.description-summary div.summary__content, div.entry-content p",
+            )?.text()
+            author = document.selectFirst(
+                "div.post-content_item.mg_author div.summary-content a, " +
+                    "div.post-content_item:contains(Studio) div.summary-content a",
+            )?.text()
+            genre = document.select(
+                "div.genres-content a, div.post-content_item.mg_genres a",
+            ).joinToString { it.text() }.takeIf { it.isNotBlank() }
+            status = when (
+                document.selectFirst(
+                    "div.post-content_item:contains(Status) div.summary-content",
+                )?.text()?.lowercase()
+            ) {
+                "ongoing" -> SAnime.ONGOING
+                "completed" -> SAnime.COMPLETED
+                else -> SAnime.UNKNOWN
+            }
         }
     }
 
@@ -211,8 +226,7 @@ class HentaiHaven :
         } ?: 0L
     }.getOrDefault(0L)
 
-    override fun episodeListSelector() = "li.wp-manga-chapter"
-    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
+    override fun episodeListParse(response: Response): List<SEpisode> = throw UnsupportedOperationException()
 
     // ── Videos ────────────────────────────────────────────────────────────────
 
@@ -254,10 +268,8 @@ class HentaiHaven :
         val videos = extractor.getVideosFromPayload(apiUrl, playerDataB64, episodeUrl)
 
         val preferred = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
-        return videos.sortedWith(compareByDescending { it.quality.contains(preferred) })
+        return videos.sortedWith(compareByDescending { it.quality == preferred })
     }
 
-    override fun videoListSelector() = ""
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
-    override fun videoUrlParse(document: Document) = throw UnsupportedOperationException()
+    override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
 }
