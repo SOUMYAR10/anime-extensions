@@ -482,6 +482,7 @@ class AV1Encodes :
                     null
                 }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "getVideoList: /get_token failed — ${e.message}")
             null
         }
